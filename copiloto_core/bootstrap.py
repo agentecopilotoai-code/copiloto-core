@@ -103,18 +103,17 @@ async def _platform_versions_applied(
     return {r['version'] for r in rows}
 
 
-async def _ensure_app_user(
+async def _create_app_role(
     conn: 'asyncpg.Connection',
     app_user: str,
     app_password: str,
 ) -> bool:
-    """Crea el rol `app_user` con `app_password` si no existe + grants.
+    """Crea el rol `app_user` con LOGIN + password (SIN grants).
 
-    El rol recibe permisos minimales para correr la app:
-      - LOGIN + password (sin SUPERUSER).
-      - USAGE en schema `app` + DML en todas las tablas (RLS sigue
-        aplicando — los grants no bypassean policies).
-      - USAGE+SELECT en sequences (para defaults `gen_random_uuid()`).
+    Solo creación del rol — los grants vienen aparte porque dependen
+    del schema `app` que aún no existe en este punto del bootstrap.
+
+    Idempotente: si el rol ya existe, no-op.
 
     Returns:
       True si creó el rol, False si ya existía.
@@ -132,20 +131,37 @@ async def _ensure_app_user(
         'select 1 from pg_roles where rolname = $1',
         app_user,
     )
-    created = False
-    if not exists:
-        # app_user ya validado por regex → safe interpolation.
-        # app_password se escapa como literal SQL (' → '').
-        pw_escaped = app_password.replace("'", "''")
-        await conn.execute(
-            f"create role {app_user} with login password '{pw_escaped}'",
-        )
-        created = True
-        logger.info('bootstrap.app_user_created user=%s', app_user)
-    else:
+    if exists:
         logger.info('bootstrap.app_user_exists user=%s', app_user)
+        return False
 
-    # Grants idempotentes — re-aplicar es no-op.
+    # app_user ya validado por regex → safe interpolation.
+    # app_password se escapa como literal SQL (' → '').
+    pw_escaped = app_password.replace("'", "''")
+    await conn.execute(
+        f"create role {app_user} with login password '{pw_escaped}'",
+    )
+    logger.info('bootstrap.app_user_created user=%s', app_user)
+    return True
+
+
+async def _grant_app_role_permissions(
+    conn: 'asyncpg.Connection',
+    app_user: str,
+) -> None:
+    """Aplica los GRANTs del rol app sobre el schema `app`.
+
+    Requiere que el schema `app` ya exista (lo crea 10-core.sql).
+    Idempotente — re-aplicar es no-op.
+
+    Permisos minimales para runtime de la app:
+      - CONNECT a la DB actual.
+      - USAGE en schema `app` + DML en todas las tablas.
+      - USAGE+SELECT en sequences (para defaults `gen_random_uuid()`).
+      - EXECUTE en functions (security definer las usa).
+
+    RLS sigue aplicando — estos grants no bypassean policies.
+    """
     grants = f"""
     grant connect on database current_database() to {app_user};
     grant usage on schema app to {app_user};
@@ -160,6 +176,22 @@ async def _ensure_app_user(
       grant execute on functions to {app_user};
     """
     await conn.execute(grants)
+
+
+# Backward compat — el nombre viejo combina ambos pasos. Útil para
+# tests/callers que quieran el shortcut clásico cuando el schema ya
+# existe (e.g. re-bootstrap después de drop role).
+async def _ensure_app_user(
+    conn: 'asyncpg.Connection',
+    app_user: str,
+    app_password: str,
+) -> bool:
+    """Compat: crea rol + aplica grants. Usalo solo si el schema `app`
+    ya existe. En el bootstrap del platform schema usá los dos pasos
+    separados (`_create_app_role` antes de los SQLs, `_grant_app_role_permissions`
+    después)."""
+    created = await _create_app_role(conn, app_user, app_password)
+    await _grant_app_role_permissions(conn, app_user)
     return created
 
 
@@ -201,6 +233,20 @@ async def apply_platform_schema(
         raise BootstrapError(
             'create_app_user=True requiere app_user y app_password.',
         )
+
+    # v1.3.3: crear el rol app ANTES de aplicar los SQLs. `10-core.sql`
+    # tiene `GRANT ... TO copiloto_app` hard-coded; si el rol no existe
+    # al momento del GRANT, postgres aborta con `UndefinedObjectError:
+    # role "copiloto_app" does not exist`.
+    #
+    # Pero los GRANTs del role sobre `app.*` van DESPUÉS de los SQLs
+    # (porque el schema `app` no existe todavía). Dos pasos separados:
+    #   1. _create_app_role        — solo CREATE ROLE
+    #   2. (aplicar SQLs que crean el schema + tablas)
+    #   3. _grant_app_role_permissions — GRANTs sobre schema `app`
+    if create_app_user:
+        assert app_user and app_password  # validado arriba
+        await _create_app_role(conn, app_user, app_password)
 
     already_applied = await _platform_versions_applied(conn)
 
@@ -253,9 +299,13 @@ async def apply_platform_schema(
         )
         applied.append(sql_file)
 
+    # Aplicar GRANTs del rol app sobre schema `app` (ahora que existe).
+    # En idempotent re-runs, los `grant ... to copiloto_app` que ya
+    # están en 10-core.sql también corren acá — no hay daño porque
+    # GRANT es idempotente, pero esto cubre el caso de un app_user
+    # custom (`--app-user=mi_app`) que NO está mencionado en 10-core.sql.
     if create_app_user:
-        assert app_user and app_password  # validado arriba
-        await _ensure_app_user(conn, app_user, app_password)
+        await _grant_app_role_permissions(conn, app_user)
 
     return applied
 
