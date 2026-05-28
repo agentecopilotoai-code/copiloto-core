@@ -59,17 +59,15 @@ Si en `main.py` activás el SPA del admin del core
 + /favicon.ico                  → CORE: favicon
 ```
 
-**Requisito**: el SPA debe estar pre-buildeado en
-`copiloto_core/admin/static/dist/`. El package por defecto **NO**
-shipea el build (Vite output queda fuera del wheel). Para usar el
-admin del core con `pip install`:
+**Desde v1.6.0**: el wheel ya trae el SPA pre-buildeado dentro
+(`copiloto_core/admin/static/dist/`, ~556KB). NO requiere Node ni
+clonar el repo del core — `pip install copiloto-core` + `admin_panel=True`
+es suficiente.
 
-1. Cloná el repo del core aparte.
-2. `cd admin-panel && npm install && npm run build`.
-3. Copiá `admin-panel/dist/*` a tu `site-packages/copiloto_core/admin/static/dist/`.
-
-O más simple: usá el admin del core vía el `docker-compose` del propio
-repo del core, no via consumer.
+> Para versiones < 1.6.0, había que clonar el repo del core,
+> `npm run build` y copiar manualmente. v1.6.0 lo automatiza en el
+> `release.sh` del core, que corre el build de Vite y commitea el dist
+> como parte del release commit antes del tag.
 
 > **Most consumers don't need the core's admin**. Tu landing +
 > dashboard + módulo te dan todo. El admin del core es para

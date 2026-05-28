@@ -130,7 +130,59 @@ if git ls-remote --tags "$REPO_REMOTE" "$TAG" 2>/dev/null | grep -q "$TAG"; then
     exit 1
 fi
 
-# ── 7. Tag + push ──
+# ── 7. Build admin-panel SPA y empaquetar dist en el wheel ──
+#
+# v1.6.0: el wheel incluye el React SPA buildeado para que consumers
+# que activen `admin_panel=True` en su create_app() obtengan el admin
+# UI funcional sin necesidad de Node ni clonar el repo del core.
+#
+# Estrategia:
+#   - npm install + npm run build en admin-panel/
+#   - Copiar admin-panel/dist/* a copiloto_core/admin/static/dist/
+#     (este path está cubierto por `[tool.setuptools.package-data]
+#     "copiloto_core" = ["admin/static/dist/**/*"]` → entra al wheel).
+#   - Force-add del nuevo dist y commit ANTES del tag, para que el
+#     `git push HEAD` lleve los assets como parte del release commit.
+#
+# Skipeable con --skip-admin-build (útil para hotfixes que no tocan UI):
+SKIP_ADMIN_BUILD=0
+if [[ "${SKIP_ADMIN_BUILD_OPT:-}" == "1" ]]; then
+    SKIP_ADMIN_BUILD=1
+fi
+
+if [[ $SKIP_ADMIN_BUILD -eq 0 ]]; then
+    if ! command -v npm >/dev/null 2>&1; then
+        echo "ERROR: npm no encontrado en PATH (necesario para build admin SPA)." >&2
+        echo "Instalá Node ≥18 o pasá SKIP_ADMIN_BUILD_OPT=1 si no querés rebuildear." >&2
+        exit 1
+    fi
+    echo "▶ Buildeando admin SPA con npm..."
+    (
+        cd admin-panel
+        if [[ ! -d node_modules ]]; then
+            echo "  (npm install — primera vez)"
+            npm install --silent
+        fi
+        rm -rf dist
+        npm run build
+    )
+
+    echo "▶ Copiando dist a copiloto_core/admin/static/dist/ (package-data)"
+    rm -rf copiloto_core/admin/static/dist
+    mkdir -p copiloto_core/admin/static/dist
+    cp -r admin-panel/dist/* copiloto_core/admin/static/dist/
+
+    if ! git diff --quiet copiloto_core/admin/static/dist 2>/dev/null \
+        || ! git ls-files --error-unmatch copiloto_core/admin/static/dist/index.html >/dev/null 2>&1; then
+        echo "▶ Commiteando assets del SPA (parte del release commit)"
+        git add copiloto_core/admin/static/dist
+        git commit -m "build: refresh admin SPA dist for $TAG" || {
+            echo "  (no hay cambios en dist — skip commit)"
+        }
+    fi
+fi
+
+# ── 8. Tag + push ──
 if [[ $DRY_RUN -eq 1 ]]; then
     echo "DRY RUN — acciones que se ejecutarían:"
     echo "  git tag -a $TAG -m 'Release $TAG'"

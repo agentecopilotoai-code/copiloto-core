@@ -38,6 +38,12 @@ backups/
 # Python build artifacts (setuptools / pip install . / python -m build)
 build/
 dist/
+# v1.6.0: excepción — el admin SPA buildeado vive en este path y DEBE
+# entrar al wheel (package-data en pyproject.toml lo cubre). El gitignore
+# de `dist/` matchea cualquier dist en el árbol; esta línea lo desexcepta
+# específicamente. release.sh corre `npm run build` + copia acá + commit.
+!copiloto_core/admin/static/dist/
+!copiloto_core/admin/static/dist/**
 *.egg-info/
 .coverage
 coverage.json
