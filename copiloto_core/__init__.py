@@ -91,6 +91,13 @@ from copiloto_core.core.security import (
 
 from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
 
+# ─── Devices / IoT (HMAC auth para sensores, webhooks firmados) ─────────
+
+from copiloto_core.auth.devices import (
+    DeviceIdentity,
+    verify_device_hmac,
+)
+
 # ─── DB (pool asyncpg con RLS por TX) ────────────────────────────────────
 #
 # NOTA: el singleton del pool (`db`) NO se re-exporta acá porque
@@ -158,6 +165,9 @@ __all__ = [
     'invalidate_gate_caches',
     # identity
     'current_user_id_from_request',
+    # devices/IoT
+    'verify_device_hmac',
+    'DeviceIdentity',
     # db (db singleton se importa de copiloto_core.db.pool — ver nota arriba)
     'get_db',
     'record_to_dict',
