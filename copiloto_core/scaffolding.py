@@ -89,6 +89,7 @@ class GenerationResult:
     files_written: tuple[str, ...]   # paths relativos a target_dir
     core_version: str          # versión pinneada en el pyproject generado
     git_protocol: str          # 'https' o 'ssh' — protocolo del pin
+    with_infra: bool = False   # docker-compose + scripts/dev-up.sh incluidos
 
 
 def _core_pin_url(git_protocol: str, version: str) -> str:
@@ -286,27 +287,35 @@ python3.12 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-# 2. Postgres + Redis + MinIO locales (ajustá según preferencia)
-docker run -d --name pg-{project_package} -p 5432:5432 \\
-  -e POSTGRES_PASSWORD=postgres \\
-  -e POSTGRES_DB={project_package} \\
-  pgvector/pgvector:pg16
-
-docker run -d --name redis-{project_package} -p 6379:6379 redis:7-alpine
-
-docker run -d --name minio-{project_package} -p 9000:9000 -p 9001:9001 \\
-  -e MINIO_ROOT_USER=minioadmin \\
-  -e MINIO_ROOT_PASSWORD=minioadmin \\
-  minio/minio server /data --console-address ":9001"
-
-# 3. Variables de entorno
+# 2. Variables de entorno
 cp .env.example .env
 # Editar .env con tus valores reales (especialmente JWT_SECRET y AUTH0_*)
+```
 
-# 4. Migraciones del módulo demo
+### Si generaste con `--with-infra` (un solo comando)
+
+```bash
+./scripts/dev-up.sh
+```
+
+`dev-up.sh` arranca docker compose (postgres + redis + minio),
+aplica el schema platform del core (`python -m copiloto_core bootstrap`),
+aplica las migraciones (`python -m copiloto_core migrate --module={module_package}`)
+y deja la app corriendo en `uvicorn {project_package}.main:app`.
+
+### Sin `--with-infra` (BYO infra)
+
+```bash
+# Levantá postgres + redis + minio donde prefieras (RDS, Docker, etc.),
+# y actualizá DATABASE_URL/REDIS_URL/S3_* en .env.
+
+# Una vez tras crear la DB (idempotente):
+python -m copiloto_core bootstrap --create-app-user
+
+# Cada vez que agregás migrations al módulo:
 python -m copiloto_core migrate --module={module_package}
 
-# 5. Levantar la app
+# Arrancar la app:
 uvicorn {project_package}.main:app --reload --port 8000
 ```
 
@@ -323,6 +332,9 @@ curl http://localhost:8000/v1/{module_package_dashed}/health
 {project_name}/
 ├── pyproject.toml           # pin a copiloto-core@v{core_version}
 ├── .env.example             # plantilla de variables
+├── docker-compose.yml       # postgres + redis + minio
+├── scripts/
+│   └── dev-up.sh            # compose up + bootstrap + migrate + uvicorn
 ├── {project_package}/
 │   ├── __init__.py
 │   └── main.py              # app = create_app(modules=[...], branding=...)
@@ -486,7 +498,127 @@ alter default privileges in schema {module_package}
 '''
 
 
-def _render_files(ctx: dict[str, str]) -> dict[str, str]:
+# ──────────────────────────────────────────────────────────────────────
+# Templates infra (opt-in con --with-infra) — v1.2.0
+# ──────────────────────────────────────────────────────────────────────
+
+_DOCKER_COMPOSE = '''\
+# docker-compose para dev local. Levanta solo lo MÍNIMO que el core
+# necesita: postgres (con pgvector), redis, minio (S3-compatible).
+#
+# Para producción usá managed services (RDS/Cloud SQL, ElastiCache,
+# S3 real). Este archivo es para iterar local — no para deploy.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${{POSTGRES_PASSWORD:-postgres}}
+      POSTGRES_DB: {project_package}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d {project_package}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${{S3_ACCESS_KEY_ID:-minioadmin}}
+      MINIO_ROOT_PASSWORD: ${{S3_SECRET_ACCESS_KEY:-minioadmin}}
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # consola web
+    volumes:
+      - minio-data:/data
+
+volumes:
+  postgres-data:
+  redis-data:
+  minio-data:
+'''
+
+
+_DEV_UP_SH = '''\
+#!/usr/bin/env bash
+# scripts/dev-up.sh — flujo full de dev local en un comando.
+#
+# Hace, en orden:
+#   1. docker compose up -d (postgres + redis + minio)
+#   2. Espera a que postgres esté healthy
+#   3. python -m copiloto_core bootstrap --create-app-user
+#      (aplica el schema platform `app.*` + crea el rol runtime)
+#   4. python -m copiloto_core migrate --module={module_package}
+#      (aplica las migraciones del módulo)
+#   5. uvicorn {project_package}.main:app --reload
+#
+# Idempotente: re-correrlo con la infra ya levantada solo arranca el
+# uvicorn (los pasos 3+4 son no-op si ya se aplicaron).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ ! -f .env ]; then
+  echo "FALTA .env — copialo de .env.example y editalo:" >&2
+  echo "    cp .env.example .env" >&2
+  exit 1
+fi
+
+# Cargar .env al shell para que `python -m copiloto_core bootstrap`
+# vea DATABASE_ADMIN_URL, APP_DB_USER, APP_DB_PASSWORD.
+set -a
+# shellcheck disable=SC1091
+source .env
+set +a
+
+echo "→ Levantando docker compose…"
+docker compose up -d
+
+echo "→ Esperando a que postgres esté healthy…"
+for i in {{1..30}}; do
+  if docker compose ps postgres --format json 2>/dev/null \\
+      | grep -q '"Health":"healthy"'; then
+    echo "  ✓ postgres listo"
+    break
+  fi
+  sleep 1
+done
+
+echo "→ Aplicando platform schema del core…"
+python -m copiloto_core bootstrap --create-app-user
+
+echo "→ Aplicando migrations del módulo {module_package}…"
+python -m copiloto_core migrate --module={module_package}
+
+echo "→ Arrancando uvicorn (Ctrl+C para detener)…"
+exec uvicorn {project_package}.main:app --reload --host 0.0.0.0 --port 8000
+'''
+
+
+_SECRETS_GITKEEP = '''\
+# Este directorio guarda secretos locales (claves GPG, llaves privadas
+# de backup, etc.) que NO deben commitearse. Ya está en .gitignore.
+'''
+
+
+def _render_files(ctx: dict[str, str], *, with_infra: bool) -> dict[str, str]:
     """Renderiza todos los templates con el contexto. Devuelve un
     dict `{path_relativo: contenido}`.
 
@@ -495,7 +627,7 @@ def _render_files(ctx: dict[str, str]) -> dict[str, str]:
     """
     project_pkg = ctx['project_package']
     module_pkg = ctx['module_package']
-    return {
+    files = {
         'pyproject.toml': _PYPROJECT_TOML.format(**ctx),
         '.env.example': _ENV_EXAMPLE.format(**ctx),
         '.gitignore': _GITIGNORE,
@@ -506,6 +638,11 @@ def _render_files(ctx: dict[str, str]) -> dict[str, str]:
         f'{module_pkg}/routers.py': _MODULE_ROUTERS.format(**ctx),
         f'{module_pkg}/migrations/001_init.sql': _MIGRATION_001.format(**ctx),
     }
+    if with_infra:
+        files['docker-compose.yml'] = _DOCKER_COMPOSE.format(**ctx)
+        files['scripts/dev-up.sh'] = _DEV_UP_SH.format(**ctx)
+        files['.secrets/.gitkeep'] = _SECRETS_GITKEEP
+    return files
 
 
 def generate_project(
@@ -514,6 +651,7 @@ def generate_project(
     module_name: str | None = None,
     core_version: str | None = None,
     git_protocol: str = 'https',
+    with_infra: bool = False,
 ) -> GenerationResult:
     """Genera el árbol de archivos de un nuevo proyecto consumer.
 
@@ -535,6 +673,10 @@ def generate_project(
         - `'ssh'`: pin via `git+ssh://`. Requiere que la SSH key del
           usuario esté registrada en una cuenta con acceso al repo.
           Comportamiento pre-v1.1.1.
+      with_infra: si True (v1.2.0+), incluye `docker-compose.yml`
+        (postgres + redis + minio), `scripts/dev-up.sh` (un solo
+        comando para levantar todo) y `.secrets/.gitkeep`. Pensado
+        para arrancar local sin tener que escribir docker run a mano.
 
     Returns:
       `GenerationResult` con todo lo escrito + paths resueltos.
@@ -582,12 +724,16 @@ def generate_project(
         'core_pin_url': _core_pin_url(git_protocol, core_version),
     }
 
-    files = _render_files(ctx)
+    files = _render_files(ctx, with_infra=with_infra)
     resolved_target.mkdir(parents=True, exist_ok=True)
     for rel_path, content in files.items():
         full = resolved_target / rel_path
         full.parent.mkdir(parents=True, exist_ok=True)
         full.write_text(content, encoding='utf-8')
+        # scripts/*.sh nacen ejecutables; sino el usuario tiene que
+        # acordarse de `chmod +x` y nos comemos otro error de onboarding.
+        if rel_path.endswith('.sh'):
+            full.chmod(0o755)
 
     return GenerationResult(
         project_name=project_name,
@@ -597,6 +743,7 @@ def generate_project(
         files_written=tuple(sorted(files.keys())),
         core_version=core_version,
         git_protocol=git_protocol,
+        with_infra=with_infra,
     )
 
 

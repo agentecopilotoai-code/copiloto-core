@@ -65,7 +65,7 @@ from __future__ import annotations
 
 # ─── Version (sincronizado con pyproject.toml) ────────────────────────────
 
-__version__ = '1.1.1'
+__version__ = '1.2.0'
 
 # ─── App factory + modelo de extensión ──────────────────────────────────
 
@@ -147,6 +147,17 @@ from copiloto_core.migrations import (
     apply_module_migrations,
 )
 
+# ─── Platform bootstrap (v1.2.0) ─────────────────────────────────────────
+#
+# Aplica el schema platform del core (`app.*`) en una DB consumer.
+# Necesario antes de `apply_module_migrations` en una DB fresca.
+# También expuesto via CLI: `python -m copiloto_core bootstrap`.
+
+from copiloto_core.bootstrap import (
+    BootstrapError,
+    apply_platform_schema,
+)
+
 # ─── Scaffolding (v1.1.0) ────────────────────────────────────────────────
 #
 # Permite que un consumer del core arranque un nuevo proyecto via:
@@ -205,6 +216,9 @@ __all__ = [
     'apply_module_migrations',
     'MigrationError',
     'MigrationChecksumMismatchError',
+    # platform bootstrap (v1.2.0)
+    'apply_platform_schema',
+    'BootstrapError',
     # scaffolding (v1.1.0)
     'generate_project',
     'GenerationResult',

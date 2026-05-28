@@ -439,3 +439,89 @@ def test_cli_new_project_invalid_git_protocol(
         ])
     assert exc.value.code == 2
     assert "invalid choice: 'gopher'" in capsys.readouterr().err
+
+
+# ─── --with-infra flag (v1.2.0) ──────────────────────────────────────────
+
+
+def test_with_infra_includes_docker_compose_and_scripts(tmp_path: Path) -> None:
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        with_infra=True,
+    )
+    assert result.with_infra is True
+    assert 'docker-compose.yml' in result.files_written
+    assert 'scripts/dev-up.sh' in result.files_written
+    assert '.secrets/.gitkeep' in result.files_written
+
+
+def test_without_infra_does_not_include_infra_files(tmp_path: Path) -> None:
+    """Default (sin flag) NO genera docker-compose ni dev-up.sh —
+    compat con v1.1.x para quien ya tiene su propio stack."""
+    result = generate_project(
+        project_name='mi-saas', target_dir=tmp_path / 'p',
+    )
+    assert result.with_infra is False
+    assert 'docker-compose.yml' not in result.files_written
+    assert 'scripts/dev-up.sh' not in result.files_written
+
+
+def test_docker_compose_uses_project_db_name(tmp_path: Path) -> None:
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        with_infra=True,
+    )
+    compose = (result.target_dir / 'docker-compose.yml').read_text()
+    # Postgres DB name = project_package (snake_case)
+    assert 'POSTGRES_DB: mi_saas' in compose
+    assert 'pgvector/pgvector:pg16' in compose
+    assert 'redis:7-alpine' in compose
+    assert 'minio/minio' in compose
+    # Ports exportados a localhost
+    assert '"5432:5432"' in compose
+    assert '"6379:6379"' in compose
+
+
+def test_dev_up_script_is_executable(tmp_path: Path) -> None:
+    """Sin x-bit, el usuario tiene que `chmod +x` antes de correrlo —
+    una fuente más de fricción que el scaffolder evita."""
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        with_infra=True,
+    )
+    script = result.target_dir / 'scripts' / 'dev-up.sh'
+    mode = script.stat().st_mode & 0o777
+    assert mode & 0o100, f'scripts/dev-up.sh debería ser ejecutable, mode={oct(mode)}'
+
+
+def test_dev_up_script_invokes_bootstrap_and_migrate(tmp_path: Path) -> None:
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        with_infra=True,
+        module_name='alertas',
+    )
+    src = (result.target_dir / 'scripts' / 'dev-up.sh').read_text()
+    assert 'docker compose up -d' in src
+    assert 'python -m copiloto_core bootstrap --create-app-user' in src
+    assert 'python -m copiloto_core migrate --module=alertas' in src
+    assert 'uvicorn mi_saas.main:app' in src
+
+
+def test_cli_new_project_with_infra_flag(tmp_path: Path, capsys) -> None:
+    from copiloto_core.__main__ import main  # noqa: PLC0415
+
+    target = tmp_path / 'demo'
+    rc = main([
+        'new-project', 'demo',
+        '--target-dir', str(target),
+        '--with-infra',
+    ])
+    assert rc == 0
+    assert (target / 'docker-compose.yml').is_file()
+    assert (target / 'scripts' / 'dev-up.sh').is_file()
+    out = capsys.readouterr().out
+    assert 'dev-up.sh' in out
