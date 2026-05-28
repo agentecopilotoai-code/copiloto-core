@@ -1,10 +1,14 @@
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
+from fastapi.staticfiles import StaticFiles
 
 from copiloto_core.api.v1.routes import router as v1_router
 from copiloto_core.admin.routes import router as admin_router
 from copiloto_core.core.config import get_settings
+from copiloto_core.extension import CoreModule
 # Branch `core`: el core NO incluye módulos opt-in. Cada módulo se monta
 # como add-on por separado al instalarse sobre el core (ver
 # `ARCHITECTURE.md` § "Cómo agregar un módulo opt-in").
@@ -107,7 +111,29 @@ async def _security_headers_middleware(request: Request, call_next):
     return response
 
 
-def create_app() -> FastAPI:
+def create_app(modules: Iterable[CoreModule] = ()) -> FastAPI:
+    """Construye la app FastAPI del core + monta módulos opt-in.
+
+    Args:
+      modules: lista de `CoreModule` declarados por los paquetes
+        consumidores. Cada módulo aporta:
+          - Su router HTTP (montado en `/v1/<code-with-dashes>`).
+          - Sus capabilities (seedeadas en `app.capability` al startup).
+          - Sus migrations SQL (aplicadas al startup vía runner Fase 6).
+          - Sus static mounts (SPA propio, landing, etc.).
+          - Su hook de activación por tenant (llamado al PATCH
+            `tenant_modules.enabled=true`).
+
+    Returns:
+      Instancia de FastAPI lista para servir.
+
+    Ejemplo:
+      >>> from copiloto_core import create_app, CoreModule
+      >>> from mi_modulo import module as mi_modulo
+      >>> app = create_app(modules=[mi_modulo])
+
+    Ver `docs/EXTENDING.md` para el contrato completo de módulo.
+    """
     settings = get_settings()
     api = FastAPI(title=settings.app_name, version='0.1.0', lifespan=lifespan)
     allowlist = parse_ip_allowlist(settings.observability_allowed_ips)
@@ -144,10 +170,36 @@ def create_app() -> FastAPI:
 
     api.include_router(admin_router)
     api.include_router(v1_router)
-    # Branch `core`: ningún router de producto se monta. Los módulos opt-in
-    # registran sus routers cuando se instalan sobre el core, agregando sus
-    # propios `api.include_router(...)` acá o vía un hook de carga dinámica
-    # (TODO Fase 3 — module discovery con manifest.json).
+
+    # ─── Montaje de módulos opt-in (Fase 5 audit#5) ──────────────────────
+    # Cada CoreModule aporta su router, sus capabilities, sus static
+    # mounts. Las migrations + el hook on_tenant_activate los maneja
+    # el runner de migrations (Fase 6) y el endpoint de tenant_modules
+    # (que invoca el hook al activar). Acá solo wireamos router + estáticos.
+    modules_list = list(modules)
+    _registered_module_codes: set[str] = set()
+    for mod in modules_list:
+        if mod.code in _registered_module_codes:
+            raise ValueError(
+                f'CoreModule.code duplicado: {mod.code!r}. Cada módulo debe '
+                f'tener un code único en el deployment.',
+            )
+        _registered_module_codes.add(mod.code)
+        api.include_router(mod.router, prefix=mod.url_prefix)
+        for url_prefix, fs_path in mod.static_mounts.items():
+            # `html=True` habilita SPA-fallback: cualquier URL no
+            # encontrada en el directorio devuelve `index.html` (lo que
+            # los SPA con client-side routing necesitan).
+            api.mount(
+                url_prefix,
+                StaticFiles(directory=fs_path, html=True),
+                name=f'{mod.code}{url_prefix.replace("/", "_")}',
+            )
+
+    # Exponemos los módulos registrados via `app.state.core_modules` para
+    # que el runner de migrations + el endpoint de tenant_modules puedan
+    # introspectar qué hay montado en este deployment.
+    api.state.core_modules = tuple(modules_list)
     return api
 
 
