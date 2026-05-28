@@ -199,14 +199,22 @@ include = ["{project_package}*", "{module_package}*"]
 '''
 
 _ENV_EXAMPLE = '''\
-# Copiá este archivo a `.env` y rellená los valores reales.
+# Copiá este archivo a `.env` y luego corré:
+#   python -m copiloto_core generate-secrets
+# que reemplaza los `CHANGE_ME` con valores random sin tocar el resto.
 # `.env` está en `.gitignore` por seguridad — nunca lo commitees.
 
 # ─── Postgres (multi-tenant, requiere extension pgvector si usás IA) ──
+# IMPORTANTE: `localhost` asume que uvicorn corre en tu host. Si
+# corrés todo dentro de docker, cambiá a `postgres` (el service name
+# del compose).
 DATABASE_URL=postgres://copiloto_app:CHANGE_ME@localhost:5432/{project_package}
 DATABASE_ADMIN_URL=postgres://postgres:CHANGE_ME@localhost:5432/{project_package}
 APP_DB_USER=copiloto_app
 APP_DB_PASSWORD=CHANGE_ME
+# Password del usuario `postgres` (admin). Matchea con docker-compose:
+#   environment: POSTGRES_PASSWORD: ${{POSTGRES_PASSWORD}}
+POSTGRES_PASSWORD=CHANGE_ME
 
 # ─── App ──────────────────────────────────────────────────────────────
 APP_NAME={project_name}
@@ -220,16 +228,15 @@ AUTH0_MGMT_CLIENT_ID=
 AUTH0_MGMT_CLIENT_SECRET=
 
 # ─── JWT ──────────────────────────────────────────────────────────────
-# Generar con: python -c "import secrets; print(secrets.token_urlsafe(64))"
-JWT_SECRET=CHANGE_ME_64_RANDOM_CHARS
+JWT_SECRET=CHANGE_ME
 
 # ─── Redis (sessions + OAuth state + rate-limit) ──────────────────────
 REDIS_URL=redis://localhost:6379/0
 
 # ─── S3 / MinIO (uploads, exports) ────────────────────────────────────
 S3_ENDPOINT=http://localhost:9000
-S3_ACCESS_KEY_ID=
-S3_SECRET_ACCESS_KEY=
+S3_ACCESS_KEY_ID=minioadmin
+S3_SECRET_ACCESS_KEY=CHANGE_ME
 S3_BUCKET={project_package}
 
 # ─── Rate limiting (req/min por IP+ruta) ──────────────────────────────
@@ -513,6 +520,9 @@ services:
   postgres:
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    # docker-compose lee `.env` del cwd para interpolar ${{VAR}}.
+    # POSTGRES_PASSWORD viene del .env, generado por
+    # `python -m copiloto_core generate-secrets`.
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${{POSTGRES_PASSWORD:-postgres}}

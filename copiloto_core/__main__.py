@@ -72,10 +72,12 @@ from copiloto_core.scaffolding import (
 
 _PACKAGED_SCRIPTS: dict[str, tuple[str, str]] = {
     # cli_name: (script_filename, short_help)
-    'generate-secrets': (
-        'generate-local-secrets.sh',
-        'Genera secretos locales random (JWT, DB password) y escribe .env',
-    ),
+    #
+    # NOTA: `generate-secrets` no aparece acá porque tiene un handler
+    # Python dedicado (`_cmd_generate_secrets`) que respeta el `.env.example`
+    # del consumer (host=localhost, project name, etc.). El bash original
+    # asumía contexto del core (hostnames docker-internal) y rompía en
+    # consumer flows. El handler Python preserva config existente.
     'auth0-configure': (
         'configure-auth0.sh',
         'Configura tenant Auth0 vía Management API (apps, scopes, actions)',
@@ -247,6 +249,99 @@ def _cmd_bootstrap(args: argparse.Namespace) -> int:
         print('✓ Platform schema ya estaba aplicado (no-op).')
     if create_user:
         print(f'  rol runtime: {app_user} (creado o ya existía)')
+    return 0
+
+
+def _cmd_generate_secrets(args: argparse.Namespace) -> int:
+    """Reescribe `.env` reemplazando `CHANGE_ME` con valores random.
+
+    Diseño (v1.3.1):
+      - Si NO existe `.env` y SÍ existe `.env.example`: copia .example → .env.
+      - Si NO existe ninguno: error claro al user (no asumimos layout).
+      - Si existe `.env`: edita en lugar, solo toca líneas con `CHANGE_ME`.
+      - Hostnames (localhost, postgres, etc.) NO se tocan — el user/scaffolder
+        ya los configuró según su deployment. El bash original rompía en
+        consumer flow porque generaba siempre con `@postgres:` docker-internal.
+      - APP_DB_PASSWORD y POSTGRES_PASSWORD también se reemplazan
+        inline dentro de DATABASE_URL / DATABASE_ADMIN_URL para mantener
+        consistencia.
+    """
+    import re  # noqa: PLC0415
+    import secrets  # noqa: PLC0415
+
+    env_path = Path.cwd() / '.env'
+    example_path = Path.cwd() / '.env.example'
+
+    if not env_path.exists():
+        if not example_path.exists():
+            print(
+                'ERROR: no encontré .env ni .env.example en el cwd. '
+                'Generate-secrets necesita uno de los dos como base. '
+                'Si arrancaste con `new-project`, deberías estar en el '
+                'directorio del proyecto generado.',
+                file=sys.stderr,
+            )
+            return 2
+        env_path.write_text(example_path.read_text(encoding='utf-8'), encoding='utf-8')
+        print(f'  ✓ creado .env desde .env.example')
+
+    content = env_path.read_text(encoding='utf-8')
+
+    # Mapeo: env var → cuántos bytes random para el valor.
+    # Los nombres están alineados con el `.env.example` que genera el
+    # scaffolder (v1.3.1+).
+    _SECRET_KEYS: dict[str, int] = {
+        'APP_DB_PASSWORD': 24,
+        'POSTGRES_PASSWORD': 24,
+        'JWT_SECRET': 48,
+        'S3_SECRET_ACCESS_KEY': 32,
+        'SERVICE_TOKEN': 36,
+        'AI_PROVIDER_MASTER_KEY': 32,
+    }
+
+    generated: dict[str, str] = {}
+
+    def _replace_simple(match: re.Match) -> str:
+        key = match.group(1)
+        value = match.group(2)
+        if key in _SECRET_KEYS and value.strip().startswith('CHANGE_ME'):
+            new_value = secrets.token_urlsafe(_SECRET_KEYS[key])
+            generated[key] = new_value
+            return f'{key}={new_value}'
+        return match.group(0)
+
+    # Pase 1: reemplazar valores simples `KEY=CHANGE_ME`.
+    pattern = re.compile(r'^([A-Z][A-Z0-9_]*)=(.*)$', re.MULTILINE)
+    content = pattern.sub(_replace_simple, content)
+
+    # Pase 2: reemplazar passwords inline en DATABASE_URLs para que
+    # matcheen con APP_DB_PASSWORD y POSTGRES_PASSWORD.
+    if 'APP_DB_PASSWORD' in generated:
+        pw = generated['APP_DB_PASSWORD']
+        # DATABASE_URL=postgres(ql)?://copiloto_app:CHANGE_ME@... → ...:<pw>@...
+        content = re.sub(
+            r'(DATABASE_URL=postgres(?:ql)?://copiloto_app:)CHANGE_ME(@)',
+            lambda m: f'{m.group(1)}{pw}{m.group(2)}',
+            content,
+        )
+    if 'POSTGRES_PASSWORD' in generated:
+        pw = generated['POSTGRES_PASSWORD']
+        content = re.sub(
+            r'(DATABASE_ADMIN_URL=postgres(?:ql)?://postgres:)CHANGE_ME(@)',
+            lambda m: f'{m.group(1)}{pw}{m.group(2)}',
+            content,
+        )
+
+    env_path.write_text(content, encoding='utf-8')
+    env_path.chmod(0o600)
+
+    if generated:
+        print(f'✓ {len(generated)} secrets generados en {env_path}:')
+        for k in sorted(generated):
+            print(f'  - {k}')
+        print(f'  permisos: 600 (solo owner puede leer)')
+    else:
+        print(f'✓ {env_path} sin CHANGE_ME pendientes. Nada para regenerar.')
     return 0
 
 
@@ -429,6 +524,22 @@ def main(argv: list[str] | None = None) -> int:
         help='code del módulo (debe ser importable: `import <code>`)',
     )
     sub_migrate.set_defaults(func=_cmd_migrate)
+
+    # ─── generate-secrets — handler Python (v1.3.1) ─────────────────
+    # Python-native (no bash) para respetar el .env.example del
+    # consumer (host=localhost, project name, etc.). Antes era un
+    # alias del bash que rompía en consumer flow.
+    sub_gen = sub.add_parser(
+        'generate-secrets',
+        help='Reemplaza CHANGE_ME en .env con valores random (respeta hostnames + project name)',
+        description=(
+            'Lee .env (o crea desde .env.example si no existe) y '
+            'reemplaza los valores CHANGE_ME con secrets random '
+            'criptográficamente seguros. NO toca hostnames, project '
+            'name, ni nada que no matchee CHANGE_ME. Idempotente.'
+        ),
+    )
+    sub_gen.set_defaults(func=_cmd_generate_secrets)
 
     # ─── Subcomandos que invocan scripts bash empaquetados (v1.3.0) ──
     for cli_name, (script_filename, help_text) in _PACKAGED_SCRIPTS.items():
