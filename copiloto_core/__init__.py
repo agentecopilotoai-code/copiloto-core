@@ -130,6 +130,14 @@ from copiloto_core.ai.providers.base import (
     ProviderUnavailable,
 )
 
+# ─── Migrations runner ───────────────────────────────────────────────────
+
+from copiloto_core.migrations import (
+    MigrationChecksumMismatchError,
+    MigrationError,
+    apply_module_migrations,
+)
+
 
 __all__ = [
     # version
@@ -166,4 +174,8 @@ __all__ = [
     'ProviderRateLimited',
     'ProviderContentRejected',
     'ProviderUnavailable',
+    # migrations runner
+    'apply_module_migrations',
+    'MigrationError',
+    'MigrationChecksumMismatchError',
 ]
