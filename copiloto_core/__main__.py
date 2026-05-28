@@ -25,7 +25,7 @@ Comandos disponibles:
 
 Uso típico:
 
-  # Crear nuevo SaaS:
+  # Crear nuevo SaaS (dev local):
   python -m copiloto_core new-project mi-saas --with-infra
   cd mi-saas
   python3.12 -m venv .venv && source .venv/bin/activate
@@ -35,6 +35,12 @@ Uso típico:
   python -m copiloto_core bootstrap --create-app-user
   python -m copiloto_core migrate --module=mi_saas_modulo
   uvicorn mi_saas.main:app --reload
+
+  # Crear nuevo SaaS con kit de producción (v2.1.0+):
+  python -m copiloto_core new-project mi-saas --with-infra --prod-ready
+  # Genera además: Dockerfile + docker-compose.prod.yml + gunicorn_conf.py
+  # + nginx.conf.example + scripts/backup.sh + .github/workflows/deploy.yml
+  # Ver docs/DEPLOYMENT.md del core para el flow completo de deploy.
 
   # Step del deploy en producción:
   python -m copiloto_core bootstrap  # idempotente
@@ -187,6 +193,7 @@ def _cmd_new_project(args: argparse.Namespace) -> int:
             module_name=args.module_name,
             git_protocol=args.git_protocol,
             with_infra=args.with_infra,
+            prod_ready=args.prod_ready,
         )
     except ScaffoldingError as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
@@ -197,7 +204,11 @@ def _cmd_new_project(args: argparse.Namespace) -> int:
     print(f'  package del deployment: {result.project_package}/')
     print(f'  módulo demo: {result.module_package}/')
     if result.with_infra:
-        print('  infra: docker-compose.yml + scripts/dev-up.sh')
+        print('  infra dev: docker-compose.yml + scripts/dev-up.sh')
+    if result.prod_ready:
+        print('  prod kit: Dockerfile + docker-compose.prod.yml + gunicorn_conf.py')
+        print('            nginx.conf.example + scripts/backup.sh + .env.prod.example')
+        print('            .github/workflows/deploy.yml')
     print(f'  archivos: {len(result.files_written)}')
     print('')
     print('Próximos pasos:')
@@ -212,6 +223,13 @@ def _cmd_new_project(args: argparse.Namespace) -> int:
         print('  python -m copiloto_core bootstrap --create-app-user')
         print(f'  python -m copiloto_core migrate --module={result.module_package}')
         print(f'  uvicorn {result.project_package}.main:app --reload')
+    if result.prod_ready:
+        print('')
+        print('Cuando estés listo para deploy a prod (ver docs/DEPLOYMENT.md):')
+        print('  cp .env.prod.example .env.prod  # editar con valores reales de prod')
+        print('  python -m copiloto_core generate-secrets --target=.env.prod')
+        print('  docker compose -f docker-compose.prod.yml build')
+        print('  docker compose -f docker-compose.prod.yml --env-file .env.prod up -d')
     return 0
 
 
@@ -530,6 +548,18 @@ def main(argv: list[str] | None = None) -> int:
             'Incluir docker-compose.yml (postgres + redis + minio), '
             'scripts/dev-up.sh y .secrets/.gitkeep para arrancar local '
             'con un solo comando. Recomendado para dev nuevo desde cero.'
+        ),
+    )
+    sub_new.add_argument(
+        '--prod-ready', action='store_true',
+        help=(
+            'v2.1.0+: incluir Production Deployment Kit — Dockerfile '
+            'multi-stage USER no-root, docker-compose.prod.yml con '
+            'healthchecks + restart policies, gunicorn_conf.py, '
+            'nginx.conf.example (TLS + security headers + rate limit), '
+            'scripts/backup.sh (pg_dump + rotación + opcional S3), '
+            '.github/workflows/deploy.yml (build + push GHCR + deploy SSH) '
+            'y .env.prod.example. Se puede combinar con --with-infra.'
         ),
     )
     sub_new.set_defaults(func=_cmd_new_project)

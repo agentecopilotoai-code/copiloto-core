@@ -1,6 +1,6 @@
 [project]
 name = "copiloto-core"
-version = "2.0.1"
+version = "2.1.0"
 description = "Sistema operativo multi-tenant para construir SaaS verticales sobre una base común de auth, RBAC, IA dispatch, billing, observabilidad y operaciones."
 readme = "README.md"
 requires-python = ">=3.12"

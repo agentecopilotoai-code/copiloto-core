@@ -90,6 +90,7 @@ class GenerationResult:
     core_version: str          # versión pinneada en el pyproject generado
     git_protocol: str          # 'https' o 'ssh' — protocolo del pin
     with_infra: bool = False   # docker-compose + scripts/dev-up.sh incluidos
+    prod_ready: bool = False   # Dockerfile + compose.prod + gunicorn + nginx + backup (v2.1.0+)
 
 
 def _core_pin_url(git_protocol: str, version: str) -> str:
@@ -329,7 +330,14 @@ htmlcov/
 .env
 .env.*
 !.env.example
+!.env.prod.example
 .secrets/
+
+# Producción (v2.1.0+) — backups locales + logs
+/var/backups/
+*.dump
+logs/
+*.log
 
 # OS
 .DS_Store
@@ -965,7 +973,690 @@ _SECRETS_GITKEEP = '''\
 '''
 
 
-def _render_files(ctx: dict[str, str], *, with_infra: bool) -> dict[str, str]:
+# ═══════════════════════════════════════════════════════════════════════
+# Producción (v2.1.0) — opt-in via --prod-ready
+#
+# Estos templates se generan cuando el usuario pasa `--prod-ready` al
+# scaffolder. Son los mínimos necesarios para deployar a producción
+# sin tener que escribirlos desde cero.
+#
+# Filosofía:
+#   - Dockerfile multi-stage, USER no-root, healthcheck embebido.
+#   - docker-compose.prod.yml lista para `docker compose up -d` en un
+#     VPS — la app + infra en una sola unidad con restart policies.
+#   - gunicorn delante de uvicorn workers (multi-process) — uvicorn
+#     standalone solo recomienda 1 proceso; gunicorn maneja el fork.
+#   - nginx config de ejemplo (TLS termination, /metrics deny,
+#     security headers). El usuario decide si correrlo en host o
+#     como sidecar container.
+#   - Script de backup pg_dump con rotación + opcional rsync a S3.
+#   - GitHub Actions workflow para build + push image a GHCR.
+# ═══════════════════════════════════════════════════════════════════════
+
+_DOCKERFILE = '''\
+# syntax=docker/dockerfile:1.7
+#
+# Multi-stage build para {project_name}:
+#   - builder: instala deps (gcc + headers de Postgres + Rust para
+#     `cryptography` si necesitara compilar).
+#   - runtime: solo Python + venv + código + USER no-root.
+#
+# La imagen final pesa ~250MB (python:3.12-slim + asyncpg + fastapi +
+# copiloto-core + tu módulo). Si necesitás menor footprint considerá
+# python:3.12-alpine, pero ojo con musl libc en wheels precompilados.
+
+ARG PYTHON_VERSION=3.12
+
+# ── Builder ───────────────────────────────────────────────────────────
+FROM python:${{PYTHON_VERSION}}-slim AS builder
+
+# Toolchain mínimo para wheels que requieran compilación.
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+      build-essential \\
+      libpq-dev \\
+      git \\
+    && rm -rf /var/lib/apt/lists/*
+
+# venv aislado — copiable a runtime tal cual.
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+WORKDIR /build
+COPY pyproject.toml ./
+# Si tenés requirements.txt en vez de pyproject:
+# COPY requirements.txt ./
+# RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && \\
+    pip install --no-cache-dir gunicorn==23.0.0 && \\
+    pip install --no-cache-dir .
+
+# ── Runtime ───────────────────────────────────────────────────────────
+FROM python:${{PYTHON_VERSION}}-slim AS runtime
+
+# Solo runtime libs (libpq para asyncpg en algunos paths, ca-certs).
+RUN apt-get update && apt-get install -y --no-install-recommends \\
+      libpq5 \\
+      ca-certificates \\
+      tini \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Usuario no-root — REQUERIDO por nuestra security posture.
+# UID/GID 10001 evita colisión con users del host por accidente.
+RUN groupadd --system --gid 10001 app && \\
+    useradd --system --uid 10001 --gid app --no-create-home --shell /sbin/nologin app
+
+COPY --from=builder /opt/venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" \\
+    PYTHONDONTWRITEBYTECODE=1 \\
+    PYTHONUNBUFFERED=1 \\
+    PORT=8000
+
+WORKDIR /app
+# Copiar el código de la app + el módulo. Sumá lo que corresponda a tu árbol.
+COPY --chown=app:app {project_package} ./{project_package}
+COPY --chown=app:app {module_package} ./{module_package}
+COPY --chown=app:app templates ./templates
+COPY --chown=app:app gunicorn_conf.py ./gunicorn_conf.py
+
+USER app
+EXPOSE 8000
+
+# Healthcheck — pega contra /v1/livez (NO toca DB). Para readiness
+# real usá el probe del orchestrator contra /v1/readyz, no este
+# HEALTHCHECK del Docker.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \\
+  CMD python -c "import urllib.request,sys; \\
+    sys.exit(0 if urllib.request.urlopen('http://localhost:'+__import__('os').environ.get('PORT','8000')+'/v1/livez', timeout=3).status==200 else 1)"
+
+# tini es PID 1 → reapea zombies + propaga SIGTERM correctamente.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["gunicorn", "{project_package}.main:app", "-c", "gunicorn_conf.py"]
+'''
+
+
+_DOCKERIGNORE = '''\
+# Lo MÍNIMO necesario para una imagen chica + builds rápidos.
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+**/*.pyo
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+.env
+.env.*
+!.env.example
+.secrets
+README.md
+docs/
+tests/
+scripts/dev-up.sh
+docker-compose.yml
+.DS_Store
+'''
+
+
+_DOCKER_COMPOSE_PROD = '''\
+# docker-compose.prod.yml — stack para deploy en un VPS único.
+#
+# Levanta tu app + infra como un sistema. Para escalar más allá de
+# un VPS usá un orchestrator real (k8s, ECS, Nomad, Swarm). Esto es
+# el sweet spot "1 VPS sirve 10-50k usuarios" sin la complejidad.
+#
+# Uso:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#
+# Antes del primer deploy:
+#   1. Generar `.env.prod` con `python -m copiloto_core generate-secrets`
+#      y editar valores reales (DATABASE_URL apuntando a `postgres`,
+#      AUTH0_*, EMAIL providers, etc.).
+#   2. Aplicar schema: `docker compose -f docker-compose.prod.yml run --rm app \\
+#      python -m copiloto_core bootstrap --create-app-user --no-seed`
+#   3. Migrate módulo: `docker compose -f docker-compose.prod.yml run --rm app \\
+#      python -m copiloto_core migrate --module={module_package}`
+#   4. `docker compose -f docker-compose.prod.yml up -d`
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    env_file: .env.prod
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"   # bind a loopback → nginx en el host expone TLS
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/v1/readyz',timeout=3).status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${{POSTGRES_PASSWORD:?POSTGRES_PASSWORD requerido en .env.prod}}
+      POSTGRES_DB: {project_package}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d {project_package}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # NO exponer 5432 al host en prod — solo accesible desde la red interna.
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --requirepass ${{REDIS_PASSWORD:?REDIS_PASSWORD requerido en .env.prod}}
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "--no-auth-warning", "-a", "${{REDIS_PASSWORD}}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 384M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    restart: always
+    environment:
+      MINIO_ROOT_USER: ${{S3_ACCESS_KEY_ID:?S3_ACCESS_KEY_ID requerido en .env.prod}}
+      MINIO_ROOT_PASSWORD: ${{S3_SECRET_ACCESS_KEY:?S3_SECRET_ACCESS_KEY requerido en .env.prod}}
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # En prod, expone minio detrás de nginx con su propio subdomain
+    # (ej. files.tudominio.com). NO expongas el puerto 9001 (consola)
+    # al público — usá tunnel SSH o VPN para acceso admin.
+
+volumes:
+  postgres-data:
+    name: {project_package}_postgres
+  redis-data:
+    name: {project_package}_redis
+  minio-data:
+    name: {project_package}_minio
+
+networks:
+  default:
+    name: {project_package}_net
+'''
+
+
+_GUNICORN_CONF = '''\
+"""gunicorn config para {project_name} en producción.
+
+Convención del core: 1 master + N workers (uvicorn). El número de
+workers depende del tipo de carga:
+
+- I/O-bound (default, lo más común): (2 × CPU) + 1
+- CPU-bound: matchear CPU físicos (no hyperthreads)
+- Memory-constrained: medir RSS real con `ps` después de warmup
+
+Para escalar más allá de 1 VPS, replicá horizontalmente este mismo
+container y poné un load balancer (nginx, HAProxy, AWS ALB) delante.
+"""
+from __future__ import annotations
+
+import multiprocessing
+import os
+
+# ── Workers ─────────────────────────────────────────────────────────────
+# Override via WEB_CONCURRENCY env var (12-factor). Default = 2×CPU+1.
+workers = int(os.environ.get('WEB_CONCURRENCY', (multiprocessing.cpu_count() * 2) + 1))
+worker_class = 'uvicorn.workers.UvicornWorker'
+
+# ── Network ─────────────────────────────────────────────────────────────
+bind = f"0.0.0.0:{{os.environ.get('PORT', '8000')}}"
+backlog = 2048
+
+# ── Timeouts ────────────────────────────────────────────────────────────
+# El default de gunicorn (30s) es OK para APIs típicas. Subir si tenés
+# requests que legítimamente tardan más (PDFs grandes, embeddings,
+# upload de archivos). NO subas a "infinito" — los workers colgados
+# bloquean el slot.
+timeout = int(os.environ.get('GUNICORN_TIMEOUT', '60'))
+graceful_timeout = 30
+keepalive = 5
+
+# ── Worker lifecycle ────────────────────────────────────────────────────
+# Reciclar workers cada N requests para evitar leaks acumulados.
+max_requests = int(os.environ.get('GUNICORN_MAX_REQUESTS', '1000'))
+max_requests_jitter = 100   # evita que todos los workers reciclen juntos
+preload_app = False         # cada worker re-importa (compatible con cuda/torch en futuro)
+
+# ── Logging ─────────────────────────────────────────────────────────────
+# stdout/stderr → docker logs / journalctl / log shipping
+accesslog = '-'
+errorlog = '-'
+loglevel = os.environ.get('GUNICORN_LOG_LEVEL', 'info')
+# Formato compatible con structlog del core. JSON para shippers (Loki,
+# CloudWatch, Datadog). Si preferís humano-legible, comentá el access
+# log format o usá '%(h)s %(l)s %(u)s %(t)s "%(r)s" %(s)s %(b)s'.
+access_log_format = (
+    '{{"remote":"%(h)s","time":"%(t)s","method":"%(m)s","path":"%(U)s",'
+    '"status":%(s)s,"bytes":%(B)s,"duration_us":%(D)s,"ua":"%(a)s"}}'
+)
+
+# ── Proxy headers ───────────────────────────────────────────────────────
+# Si tenés nginx/ALB delante, confiar en X-Forwarded-For y X-Forwarded-Proto.
+# IMPORTANTE: forwarded_allow_ips debe coincidir con la IP del proxy
+# real — '*' es OK si la app solo escucha en loopback (no expuesta).
+forwarded_allow_ips = os.environ.get('FORWARDED_ALLOW_IPS', '127.0.0.1')
+proxy_protocol = False
+
+# ── Security ────────────────────────────────────────────────────────────
+limit_request_line = 8190      # default Apache; bajar si NO usás query strings largos
+limit_request_fields = 100
+limit_request_field_size = 8190
+'''
+
+
+_NGINX_CONF_EXAMPLE = '''\
+# nginx.conf.example — reverse proxy delante de {project_name} en prod.
+#
+# Asumimos que la app corre en `127.0.0.1:8000` (bind via
+# docker-compose.prod.yml mappeado a loopback) y nginx en el host
+# termina TLS + sirve estáticos + bloquea /metrics.
+#
+# Pegá esto en `/etc/nginx/sites-available/{project_package}.conf` y
+# linkealo con `ln -s ... /etc/nginx/sites-enabled/`.
+#
+# Para TLS gratis usá certbot:
+#   sudo certbot --nginx -d tudominio.com -d www.tudominio.com
+
+# ── Rate limit zones (defínelas en http{{}} de /etc/nginx/nginx.conf) ─
+# limit_req_zone $binary_remote_addr zone=app_general:10m rate=30r/s;
+# limit_req_zone $binary_remote_addr zone=app_login:10m rate=5r/m;
+
+upstream {project_package}_upstream {{
+  server 127.0.0.1:8000;
+  keepalive 32;
+}}
+
+# ── Redirect HTTP → HTTPS ──────────────────────────────────────────────
+server {{
+  listen 80;
+  listen [::]:80;
+  server_name tudominio.com www.tudominio.com;
+  return 301 https://$host$request_uri;
+}}
+
+# ── App principal (HTTPS) ──────────────────────────────────────────────
+server {{
+  listen 443 ssl http2;
+  listen [::]:443 ssl http2;
+  server_name tudominio.com www.tudominio.com;
+
+  # Certbot rellena estos paths automáticamente.
+  ssl_certificate     /etc/letsencrypt/live/tudominio.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/tudominio.com/privkey.pem;
+  ssl_protocols TLSv1.2 TLSv1.3;
+  ssl_prefer_server_ciphers on;
+  ssl_session_cache shared:SSL:10m;
+  ssl_session_timeout 1d;
+
+  # ── Security headers (defense-in-depth, además del CSP del core) ───
+  add_header Strict-Transport-Security "max-age=63072000; includeSubDomains; preload" always;
+  add_header X-Content-Type-Options "nosniff" always;
+  add_header X-Frame-Options "DENY" always;
+  add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+  add_header Permissions-Policy "geolocation=(), camera=(), microphone=()" always;
+
+  # ── Body size — afinar según tu caso. Default 1MB es bajo para upload. ─
+  client_max_body_size 25M;
+  client_body_timeout 30s;
+
+  # ── Bloquear /metrics al público (Prometheus debe ir por VPN o internal) ─
+  location /metrics {{
+    # Solo IPs de Prometheus / monitoring.
+    allow 10.0.0.0/8;
+    allow 127.0.0.1;
+    deny all;
+    proxy_pass http://{project_package}_upstream;
+  }}
+
+  # ── Rate limit en /admin/login (anti-brute) ────────────────────────
+  location /admin/login {{
+    limit_req zone=app_login burst=10 nodelay;
+    proxy_pass http://{project_package}_upstream;
+    include /etc/nginx/proxy_params;
+  }}
+
+  # ── Rate limit general en todo lo demás ────────────────────────────
+  location / {{
+    limit_req zone=app_general burst=60 nodelay;
+    proxy_pass http://{project_package}_upstream;
+
+    # Forward de IP real + esquema al backend (gunicorn lee X-Forwarded-*).
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+
+    # Timeouts amplios para uploads + streaming responses.
+    proxy_connect_timeout 10s;
+    proxy_read_timeout 90s;
+    proxy_send_timeout 90s;
+
+    # Keepalive con el upstream para evitar setup TCP por request.
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+
+    # Buffering: OFF para SSE/WebSocket si tu app las usa.
+    # proxy_buffering off;
+  }}
+
+  # ── Logs (rotalos con logrotate, opcional log shipping) ────────────
+  access_log /var/log/nginx/{project_package}_access.log combined buffer=32k flush=5s;
+  error_log  /var/log/nginx/{project_package}_error.log warn;
+}}
+'''
+
+
+_BACKUP_SH = '''\
+#!/usr/bin/env bash
+# scripts/backup.sh — backup de la DB de {project_name}.
+#
+# Estrategia:
+#   1. pg_dump custom format (-Fc) — comprimido + restoreable parcial.
+#   2. Rotación local: mantener últimos N días.
+#   3. (opcional) rsync/aws-cli a S3 / minio remoto / backblaze para
+#      protección off-site.
+#
+# Ejecutar via cron (en el host del docker-compose, NO dentro del
+# container de postgres):
+#
+#   # /etc/cron.d/{project_package}-backup
+#   0 3 * * * root /opt/{project_package}/scripts/backup.sh
+#
+# O via systemd timer (preferido — mejor logging + control):
+#   ver docs/DEPLOYMENT.md § "Backup automatizado".
+
+set -euo pipefail
+
+# ── Config (override via env) ──────────────────────────────────────────
+PROJECT="${{PROJECT:-{project_package}}}"
+BACKUP_DIR="${{BACKUP_DIR:-/var/backups/$PROJECT}}"
+RETENTION_DAYS="${{RETENTION_DAYS:-14}}"
+COMPOSE_FILE="${{COMPOSE_FILE:-docker-compose.prod.yml}}"
+PG_SERVICE="${{PG_SERVICE:-postgres}}"
+PG_USER="${{PG_USER:-postgres}}"
+PG_DB="${{PG_DB:-$PROJECT}}"
+
+# Opcional — S3-compatible (minio remoto, AWS S3, backblaze, etc.)
+S3_BUCKET="${{S3_BUCKET:-}}"
+S3_ENDPOINT="${{S3_ENDPOINT:-}}"   # vacío = AWS
+
+ts=$(date -u +%Y%m%d-%H%M%S)
+out="$BACKUP_DIR/${{PROJECT}}-${{ts}}.dump"
+
+mkdir -p "$BACKUP_DIR"
+
+echo "→ Dumping $PG_DB → $out"
+docker compose -f "$COMPOSE_FILE" exec -T "$PG_SERVICE" \\
+  pg_dump -U "$PG_USER" -d "$PG_DB" -Fc --no-owner --no-acl \\
+  > "$out"
+
+# Verificar integridad — pg_restore --list lista los objetos sin restore.
+if ! docker compose -f "$COMPOSE_FILE" exec -T "$PG_SERVICE" \\
+       pg_restore --list < "$out" > /dev/null; then
+  echo "ERROR: dump corrupto. NO se rota." >&2
+  rm -f "$out"
+  exit 1
+fi
+echo "  ✓ integridad OK ($(du -h "$out" | cut -f1))"
+
+# ── Rotación local ─────────────────────────────────────────────────────
+echo "→ Rotando dumps > ${{RETENTION_DAYS}} días en $BACKUP_DIR"
+find "$BACKUP_DIR" -name "${{PROJECT}}-*.dump" -type f \\
+  -mtime "+${{RETENTION_DAYS}}" -print -delete
+
+# ── Off-site (opcional) ────────────────────────────────────────────────
+if [ -n "$S3_BUCKET" ]; then
+  echo "→ Subiendo a s3://$S3_BUCKET/"
+  endpoint_arg=""
+  if [ -n "$S3_ENDPOINT" ]; then
+    endpoint_arg="--endpoint-url $S3_ENDPOINT"
+  fi
+  aws s3 cp $endpoint_arg "$out" "s3://$S3_BUCKET/$(basename "$out")" \\
+    --storage-class STANDARD_IA
+fi
+
+echo "✓ backup completo: $out"
+'''
+
+
+_GITHUB_ACTIONS_DEPLOY = '''\
+# .github/workflows/deploy.yml — build + push image + deploy SSH.
+#
+# Triggers:
+#   - push a `main` → deploy automático a prod
+#   - manual via "Run workflow" en GitHub UI → permite especificar tag
+#
+# Requiere los siguientes secrets en el repo (Settings → Secrets):
+#
+#   DEPLOY_HOST        — IP o hostname del VPS (ej. "prod.tudominio.com")
+#   DEPLOY_USER        — usuario SSH (recomendado: usuario dedicado, NO root)
+#   DEPLOY_SSH_KEY     — private key PEM (genera con `ssh-keygen -t ed25519`,
+#                        agregá la public a ~/.ssh/authorized_keys del VPS)
+#   DEPLOY_PATH        — path absoluto donde vive el compose (ej. "/opt/{project_package}")
+#
+# La imagen se publica a GHCR (ghcr.io/<owner>/{project_package}) — gratis
+# para repos públicos, y para privados requiere GHCR token configurado
+# en el VPS (`docker login ghcr.io`).
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag a deployar (default: latest commit SHA)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ${{{{ github.repository_owner }}}}/{project_package}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{{{ steps.meta.outputs.tag }}}}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{{{ env.REGISTRY }}}}
+          username: ${{{{ github.actor }}}}
+          password: ${{{{ secrets.GITHUB_TOKEN }}}}
+
+      - name: Compute tag
+        id: meta
+        run: |
+          if [ -n "${{{{ inputs.tag }}}}" ]; then
+            echo "tag=${{{{ inputs.tag }}}}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${{{{ github.sha }}}}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{{{ env.REGISTRY }}}}/${{{{ env.IMAGE }}}}:${{{{ steps.meta.outputs.tag }}}}
+            ${{{{ env.REGISTRY }}}}/${{{{ env.IMAGE }}}}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{{{ secrets.DEPLOY_HOST }}}}
+          username: ${{{{ secrets.DEPLOY_USER }}}}
+          key: ${{{{ secrets.DEPLOY_SSH_KEY }}}}
+          script: |
+            set -e
+            cd ${{{{ secrets.DEPLOY_PATH }}}}
+            docker compose -f docker-compose.prod.yml pull app
+            # Ejecutar migrations ANTES de levantar la nueva versión.
+            # Si fallan, abortamos el deploy y el container viejo sigue corriendo.
+            docker compose -f docker-compose.prod.yml run --rm app \\
+              python -m copiloto_core migrate --module={module_package}
+            docker compose -f docker-compose.prod.yml up -d --no-deps app
+            # Esperar que el nuevo /readyz responda 200 — sino rollback manual.
+            for i in $(seq 1 30); do
+              if curl -fsS http://127.0.0.1:8000/v1/readyz > /dev/null; then
+                echo "✓ deploy OK"
+                exit 0
+              fi
+              sleep 2
+            done
+            echo "✗ deploy fail — /v1/readyz nunca respondió 200"
+            exit 1
+'''
+
+
+_ENV_PROD_EXAMPLE = '''\
+# .env.prod.example — variables de entorno para deploy en producción.
+#
+# Copialo a `.env.prod` (NO commitear) y completá los valores reales.
+# El comando `python -m copiloto_core generate-secrets --target=.env.prod`
+# rellena los CHANGE_ME automáticamente.
+#
+# IMPORTANTE: en prod las URLs apuntan a los nombres de servicio del
+# docker-compose (`postgres`, `redis`, `minio`), NO a `localhost`.
+
+# ── Core ───────────────────────────────────────────────────────────────
+ENV=production
+LOG_LEVEL=info
+PORT=8000
+WEB_CONCURRENCY=4    # ajustar según tus CPUs reales
+
+# ── DB (apunta al service `postgres` del compose) ──────────────────────
+POSTGRES_PASSWORD=CHANGE_ME
+DATABASE_URL=postgresql://{project_package}_app:CHANGE_ME@postgres:5432/{project_package}
+DATABASE_ADMIN_URL=postgresql://postgres:CHANGE_ME@postgres:5432/{project_package}
+APP_DB_USER={project_package}_app
+APP_DB_PASSWORD=CHANGE_ME
+
+# ── Redis (apunta al service `redis` del compose, con password) ────────
+REDIS_PASSWORD=CHANGE_ME
+REDIS_URL=redis://:CHANGE_ME@redis:6379/0
+
+# ── S3 / minio (apunta al service `minio` del compose) ─────────────────
+S3_ENDPOINT=http://minio:9000
+S3_ACCESS_KEY_ID=CHANGE_ME
+S3_SECRET_ACCESS_KEY=CHANGE_ME
+S3_BUCKET={project_package}-prod
+
+# ── Secrets internos del core ──────────────────────────────────────────
+SERVICE_TOKEN=CHANGE_ME
+SESSION_SECRET=CHANGE_ME
+AI_PROVIDER_MASTER_KEY=CHANGE_ME
+
+# ── Auth0 (producción — tenant distinto al de dev) ─────────────────────
+AUTH0_DOMAIN=tu-tenant-prod.auth0.com
+AUTH0_AUDIENCE=https://api.tudominio.com
+AUTH0_ADMIN_CLIENT_ID=CHANGE_ME
+AUTH0_ADMIN_CLIENT_SECRET=CHANGE_ME
+
+POST_LOGIN_REDIRECT_URL=https://tudominio.com/dashboard
+POST_LOGOUT_REDIRECT_URL=https://tudominio.com/
+
+# MFA en prod SIEMPRE ON.
+MFA_ENFORCEMENT_ENABLED=true
+
+# Forwarded headers — solo si nginx está delante.
+FORWARDED_ALLOW_IPS=127.0.0.1
+'''
+
+
+def _render_files(
+    ctx: dict[str, str], *, with_infra: bool, prod_ready: bool = False,
+) -> dict[str, str]:
     """Renderiza todos los templates con el contexto. Devuelve un
     dict `{path_relativo: contenido}`.
 
@@ -993,6 +1684,19 @@ def _render_files(ctx: dict[str, str], *, with_infra: bool) -> dict[str, str]:
         files['docker-compose.yml'] = _DOCKER_COMPOSE.format(**ctx)
         files['scripts/dev-up.sh'] = _DEV_UP_SH.format(**ctx)
         files['.secrets/.gitkeep'] = _SECRETS_GITKEEP
+    if prod_ready:
+        # v2.1.0 — Production Deployment Kit.
+        # Estos artefactos son aditivos: no rompen el flujo dev (el
+        # consumer sigue usando `dev-up.sh` para iterar local). Son la
+        # base mínima para deployar a un VPS o a un orchestrator.
+        files['Dockerfile'] = _DOCKERFILE.format(**ctx)
+        files['.dockerignore'] = _DOCKERIGNORE
+        files['docker-compose.prod.yml'] = _DOCKER_COMPOSE_PROD.format(**ctx)
+        files['gunicorn_conf.py'] = _GUNICORN_CONF.format(**ctx)
+        files['nginx.conf.example'] = _NGINX_CONF_EXAMPLE.format(**ctx)
+        files['scripts/backup.sh'] = _BACKUP_SH.format(**ctx)
+        files['.github/workflows/deploy.yml'] = _GITHUB_ACTIONS_DEPLOY.format(**ctx)
+        files['.env.prod.example'] = _ENV_PROD_EXAMPLE.format(**ctx)
     return files
 
 
@@ -1003,6 +1707,7 @@ def generate_project(
     core_version: str | None = None,
     git_protocol: str = 'https',
     with_infra: bool = False,
+    prod_ready: bool = False,
 ) -> GenerationResult:
     """Genera el árbol de archivos de un nuevo proyecto consumer.
 
@@ -1028,6 +1733,17 @@ def generate_project(
         (postgres + redis + minio), `scripts/dev-up.sh` (un solo
         comando para levantar todo) y `.secrets/.gitkeep`. Pensado
         para arrancar local sin tener que escribir docker run a mano.
+      prod_ready: si True (v2.1.0+), incluye **Production Deployment
+        Kit**: `Dockerfile` multi-stage USER no-root,
+        `docker-compose.prod.yml` con healthchecks + restart policies +
+        resource limits, `gunicorn_conf.py` (workers + timeouts + JSON
+        access log), `nginx.conf.example` (TLS + security headers +
+        rate limit + /metrics deny), `scripts/backup.sh` (pg_dump con
+        rotación + opcional S3 off-site), workflow de GitHub Actions
+        (build → push GHCR → deploy SSH), `.env.prod.example` y
+        `.dockerignore`. Se puede combinar con `with_infra` (los dos
+        no se pisan: dev compose escucha en localhost, prod compose
+        usa volúmenes nombrados y bind a loopback).
 
     Returns:
       `GenerationResult` con todo lo escrito + paths resueltos.
@@ -1075,7 +1791,7 @@ def generate_project(
         'core_pin_url': _core_pin_url(git_protocol, core_version),
     }
 
-    files = _render_files(ctx, with_infra=with_infra)
+    files = _render_files(ctx, with_infra=with_infra, prod_ready=prod_ready)
     resolved_target.mkdir(parents=True, exist_ok=True)
     for rel_path, content in files.items():
         full = resolved_target / rel_path
@@ -1095,6 +1811,7 @@ def generate_project(
         core_version=core_version,
         git_protocol=git_protocol,
         with_infra=with_infra,
+        prod_ready=prod_ready,
     )
 
 

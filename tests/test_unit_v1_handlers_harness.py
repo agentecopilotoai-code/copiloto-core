@@ -1661,6 +1661,176 @@ def test_public_health_calls_db():
     assert result == {'status': 'ok'}
 
 
+# ─── livez / readyz (v2.1.0 — split de health para k8s/ALB) ──────────────
+
+
+def test_livez_no_dependencies():
+    """/v1/livez NO toca DB ni Redis — solo confirma que el proceso
+    está respondiendo. Es la semántica k8s standard de liveness probe."""
+    from copiloto_core.api.v1.handlers.public_handlers import livez
+    result = asyncio.run(livez())
+    assert result == {'status': 'ok'}
+
+
+def test_readyz_postgres_ok_no_redis(monkeypatch):
+    """Sin REDIS_URL en env, el check de redis se reporta como
+    skipped pero el probe sigue OK (single-process funciona con
+    InMemorySessionStore)."""
+    from unittest.mock import AsyncMock, patch
+    from copiloto_core.api.v1.handlers import public_handlers
+
+    monkeypatch.delenv('REDIS_URL', raising=False)
+    with patch.object(
+        public_handlers, '_check_postgres',
+        new=AsyncMock(return_value={'ok': True}),
+    ):
+        response = asyncio.run(public_handlers.readyz())
+    assert response.status_code == 200
+    body = json.loads(response.body.decode())
+    assert body['ok'] is True
+    assert body['checks']['postgres']['ok'] is True
+    assert body['checks']['redis']['skipped'] is True
+
+
+def test_readyz_postgres_down_returns_503(monkeypatch):
+    """Si la DB falla, readyz devuelve 503 — el orchestrator deja de
+    rutear pero NO reinicia (proceso vivo, dependencia rota)."""
+    from unittest.mock import AsyncMock, patch
+    from copiloto_core.api.v1.handlers import public_handlers
+
+    monkeypatch.delenv('REDIS_URL', raising=False)
+    with patch.object(
+        public_handlers, '_check_postgres',
+        new=AsyncMock(return_value={
+            'ok': False, 'error': 'connection refused',
+        }),
+    ):
+        response = asyncio.run(public_handlers.readyz())
+    assert response.status_code == 503
+    body = json.loads(response.body.decode())
+    assert body['ok'] is False
+    assert body['checks']['postgres']['ok'] is False
+    assert 'connection refused' in body['checks']['postgres']['error']
+
+
+def test_readyz_redis_configured_and_ok(monkeypatch):
+    """Cuando REDIS_URL está seteado el check pinga al broker.
+    Mockeamos `_check_redis` directamente (vía patch.object sobre el
+    módulo del handler) — evita el dance de sys.modules y es más
+    estable a través de orderings de la suite."""
+    from unittest.mock import AsyncMock, patch
+    from copiloto_core.api.v1.handlers import public_handlers
+
+    monkeypatch.setenv('REDIS_URL', 'redis://localhost:6379/0')
+    with patch.object(
+        public_handlers, '_check_postgres',
+        new=AsyncMock(return_value={'ok': True}),
+    ), patch.object(
+        public_handlers, '_check_redis',
+        new=AsyncMock(return_value={'ok': True}),
+    ):
+        response = asyncio.run(public_handlers.readyz())
+    assert response.status_code == 200
+    body = json.loads(response.body.decode())
+    assert body['ok'] is True
+    assert body['checks']['redis']['ok'] is True
+    assert body['checks']['redis'].get('skipped') is not True
+
+
+def test_readyz_redis_down_returns_503(monkeypatch):
+    """REDIS_URL seteado pero broker caído → 503 con detalle del error."""
+    from unittest.mock import AsyncMock, patch
+    from copiloto_core.api.v1.handlers import public_handlers
+
+    monkeypatch.setenv('REDIS_URL', 'redis://localhost:6379/0')
+    with patch.object(
+        public_handlers, '_check_postgres',
+        new=AsyncMock(return_value={'ok': True}),
+    ), patch.object(
+        public_handlers, '_check_redis',
+        new=AsyncMock(return_value={
+            'ok': False, 'error': 'redis down',
+        }),
+    ):
+        response = asyncio.run(public_handlers.readyz())
+    assert response.status_code == 503
+    body = json.loads(response.body.decode())
+    assert body['ok'] is False
+    assert body['checks']['postgres']['ok'] is True
+    assert body['checks']['redis']['ok'] is False
+    assert 'redis down' in body['checks']['redis']['error']
+
+
+def test_check_postgres_returns_error_on_exception():
+    """Coverage del helper `_check_postgres` cuando el pool falla."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from copiloto_core.api.v1.handlers.public_handlers import _check_postgres
+
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError('pool down'))
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_db = MagicMock()
+    mock_db.connection = MagicMock(return_value=mock_ctx)
+
+    with patch('copiloto_core.db.pool.db', mock_db):
+        result = asyncio.run(_check_postgres())
+    assert result['ok'] is False
+    assert 'pool down' in result['error']
+
+
+def test_check_postgres_success():
+    """Coverage del helper `_check_postgres` happy path."""
+    from unittest.mock import AsyncMock, MagicMock, patch
+    from copiloto_core.api.v1.handlers.public_handlers import _check_postgres
+
+    mock_conn = AsyncMock()
+    mock_conn.fetchval = AsyncMock(return_value=1)
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_conn)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    mock_db = MagicMock()
+    mock_db.connection = MagicMock(return_value=mock_ctx)
+
+    with patch('copiloto_core.db.pool.db', mock_db):
+        result = asyncio.run(_check_postgres())
+    assert result == {'ok': True}
+
+
+def test_check_redis_returns_error_on_invalid_url():
+    """Coverage del helper `_check_redis` cuando `from_url` falla.
+
+    Usamos un URL malformado para que redis-py mismo levante una
+    excepción al parsear — evita el cross-test pollution
+    de mocks sobre sys.modules que pelea con suites grandes."""
+    from copiloto_core.api.v1.handlers.public_handlers import _check_redis
+
+    # Esquema inválido — `redis.from_url` rechaza al parsear.
+    result = asyncio.run(_check_redis('not-a-valid-scheme://x'))
+    assert result['ok'] is False
+    assert 'error' in result
+
+
+def test_check_redis_happy_path_with_fakeredis():
+    """Coverage del happy path de `_check_redis` (PING → True).
+
+    Usa `fakeredis` (dev dep) y mockea `redis.asyncio.from_url`
+    para devolver un cliente fake con .ping() y .aclose() reales —
+    cubre las líneas del try/finally interno sin necesitar broker."""
+    from unittest.mock import patch
+    from copiloto_core.api.v1.handlers.public_handlers import _check_redis
+
+    try:
+        import fakeredis.aioredis as fakeredis_aio
+    except ImportError:
+        import pytest  # noqa: PLC0415
+        pytest.skip('fakeredis not installed')
+
+    fake_client = fakeredis_aio.FakeRedis()
+    with patch('redis.asyncio.from_url', return_value=fake_client):
+        result = asyncio.run(_check_redis('redis://x:6379/0'))
+    assert result == {'ok': True}
+
+
 # ─── schemas — TENANT_SLUG_PATTERN + timezone validator ───────────────────
 
 
