@@ -127,7 +127,7 @@ if [[ $SKIP_COVERAGE == 0 ]]; then
   # locos arreglaban el local y no detectaban si CI subía/bajaba.
   # Los `--ignore` históricos apuntaban a archivos ya borrados; los quitamos.
   section "Job 2/4 — coverage-gate (≥95% backend)"
-  pytest --cov=app --cov-report=xml --cov-report=term \
+  pytest --cov=copiloto_core --cov-report=xml --cov-report=term \
     --cov-fail-under=95 \
     -p no:warnings --tb=short
   ok "coverage-gate ≥90%"

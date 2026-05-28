@@ -8,13 +8,13 @@ import pytest
 
 
 def test_is_supported_country_true():
-    from app.services.locale import is_supported_country
+    from copiloto_core.services.locale import is_supported_country
     for code in ('CO', 'MX', 'AR', 'CL', 'PE', 'EC', 'UY'):
         assert is_supported_country(code) is True
 
 
 def test_is_supported_country_false():
-    from app.services.locale import is_supported_country
+    from copiloto_core.services.locale import is_supported_country
     assert is_supported_country('US') is False
     assert is_supported_country('BR') is False
     assert is_supported_country('') is False
@@ -25,7 +25,7 @@ def test_is_supported_country_false():
 
 
 def test_profile_for_returns_full_profile():
-    from app.services.locale import profile_for
+    from copiloto_core.services.locale import profile_for
     co = profile_for('CO')
     assert co['locale'] == 'es-CO'
     assert co['currency'] == 'COP'
@@ -34,7 +34,7 @@ def test_profile_for_returns_full_profile():
 
 
 def test_profile_for_each_country():
-    from app.services.locale import SUPPORTED_COUNTRIES, profile_for
+    from copiloto_core.services.locale import SUPPORTED_COUNTRIES, profile_for
     for code in SUPPORTED_COUNTRIES:
         p = profile_for(code)
         assert 'locale' in p
@@ -43,14 +43,14 @@ def test_profile_for_each_country():
 
 
 def test_profile_for_unsupported_raises():
-    from app.services.locale import profile_for
+    from copiloto_core.services.locale import profile_for
     with pytest.raises(ValueError, match='no soportado'):
         profile_for('US')
 
 
 def test_profile_for_returns_copy():
     """Calling profile_for twice returns different dict instances."""
-    from app.services.locale import profile_for
+    from copiloto_core.services.locale import profile_for
     p1 = profile_for('CO')
     p1['locale'] = 'mutated'
     p2 = profile_for('CO')
@@ -61,19 +61,19 @@ def test_profile_for_returns_copy():
 
 
 def test_default_locale():
-    from app.services.locale import default_locale
+    from copiloto_core.services.locale import default_locale
     assert default_locale('CO') == 'es-CO'
     assert default_locale('MX') == 'es-MX'
 
 
 def test_default_currency():
-    from app.services.locale import default_currency
+    from copiloto_core.services.locale import default_currency
     assert default_currency('CO') == 'COP'
     assert default_currency('EC') == 'USD'
 
 
 def test_default_timezone():
-    from app.services.locale import default_timezone
+    from copiloto_core.services.locale import default_timezone
     assert default_timezone('AR') == 'America/Argentina/Buenos_Aires'
     assert default_timezone('UY') == 'America/Montevideo'
 
@@ -82,7 +82,7 @@ def test_default_timezone():
 
 
 def test_format_money_cop_no_decimals():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(50000, 'COP')
     assert '50.000' in out  # COP uses '.' as thousands sep
     assert 'COP' in out
@@ -90,28 +90,28 @@ def test_format_money_cop_no_decimals():
 
 
 def test_format_money_mxn_with_decimals():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(1500.5, 'MXN')
     assert '1,500.50' in out  # MXN uses ',' thousands and '.' decimal
     assert 'MXN' in out
 
 
 def test_format_money_clp_no_decimals():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(123456, 'CLP')
     assert '123.456' in out
     assert 'CLP' in out
 
 
 def test_format_money_pen_uses_S_slash_symbol():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(100, 'PEN')
     assert 'S/' in out
     assert 'PEN' in out
 
 
 def test_format_money_unknown_currency_falls_back():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(1500.5, 'BRL')
     # Default profile: $ symbol, 2 decimals, ',' thousands, '.' decimal
     assert 'BRL' in out
@@ -119,14 +119,14 @@ def test_format_money_unknown_currency_falls_back():
 
 
 def test_format_money_integer_zero():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(0, 'COP')
     assert 'COP' in out
     assert '0' in out
 
 
 def test_format_money_argentine_uses_dot_thousands_comma_decimal():
-    from app.services.locale import format_money
+    from copiloto_core.services.locale import format_money
     out = format_money(1234.5, 'ARS')
     # AR: '.' thousands, ',' decimal, 2 decimals
     assert '1.234,50' in out
@@ -136,32 +136,32 @@ def test_format_money_argentine_uses_dot_thousands_comma_decimal():
 
 
 def test_validate_phone_returns_e164():
-    from app.services.locale import validate_phone
+    from copiloto_core.services.locale import validate_phone
     out = validate_phone('300 555 1212', 'CO')
     assert out.startswith('+57')
 
 
 def test_validate_phone_e164_input():
-    from app.services.locale import validate_phone
+    from copiloto_core.services.locale import validate_phone
     # If already E.164, country hint ignored
     out = validate_phone('+573005551212', None)
     assert out == '+573005551212'
 
 
 def test_validate_phone_invalid_raises():
-    from app.services.locale import PhoneValidationError, validate_phone
+    from copiloto_core.services.locale import PhoneValidationError, validate_phone
     with pytest.raises(PhoneValidationError, match='inválido'):
         validate_phone('123', 'CO')
 
 
 def test_validate_phone_unparseable_raises():
-    from app.services.locale import PhoneValidationError, validate_phone
+    from copiloto_core.services.locale import PhoneValidationError, validate_phone
     with pytest.raises(PhoneValidationError, match='parsear'):
         validate_phone('garbage', None)
 
 
 def test_validate_phone_empty_raises():
-    from app.services.locale import PhoneValidationError, validate_phone
+    from copiloto_core.services.locale import PhoneValidationError, validate_phone
     with pytest.raises(PhoneValidationError, match='vac'):
         validate_phone('', 'CO')
     with pytest.raises(PhoneValidationError):
@@ -169,18 +169,18 @@ def test_validate_phone_empty_raises():
 
 
 def test_validate_phone_non_string_raises():
-    from app.services.locale import PhoneValidationError, validate_phone
+    from copiloto_core.services.locale import PhoneValidationError, validate_phone
     with pytest.raises(PhoneValidationError):
         validate_phone(None, 'CO')
 
 
 def test_is_valid_phone_true():
-    from app.services.locale import is_valid_phone
+    from copiloto_core.services.locale import is_valid_phone
     assert is_valid_phone('+573005551212') is True
 
 
 def test_is_valid_phone_false():
-    from app.services.locale import is_valid_phone
+    from copiloto_core.services.locale import is_valid_phone
     assert is_valid_phone('garbage') is False
     assert is_valid_phone('') is False
 
@@ -190,7 +190,7 @@ def test_is_valid_phone_false():
 
 def test_supported_user_locales_includes_alternates():
     """BUG-075: SUPPORTED_USER_LOCALES extends past country defaults."""
-    from app.services.locale import SUPPORTED_USER_LOCALES
+    from copiloto_core.services.locale import SUPPORTED_USER_LOCALES
     assert 'es-CO' in SUPPORTED_USER_LOCALES
     assert 'es-ES' in SUPPORTED_USER_LOCALES
     assert 'en-US' in SUPPORTED_USER_LOCALES

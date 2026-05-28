@@ -1,4 +1,4 @@
-"""M45 — cobertura de app.main, app.core.logging, app.services.metrics.
+"""M45 — cobertura de copiloto_core.main, copiloto_core.core.logging, copiloto_core.services.metrics.
 
 Cubre:
   - lifespan: connect + close
@@ -20,21 +20,21 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 
-# ─── app.core.logging ──────────────────────────────────────────────────────
+# ─── copiloto_core.core.logging ──────────────────────────────────────────────────────
 
 
 def test_redact_value_phone_in_string():
-    from app.core.logging import _redact_value
+    from copiloto_core.core.logging import _redact_value
     assert '[PHONE]' in _redact_value('llamar al +573001234567')
 
 
 def test_redact_value_email_in_string():
-    from app.core.logging import _redact_value
+    from copiloto_core.core.logging import _redact_value
     assert '[EMAIL]' in _redact_value('escribir a foo@bar.co')
 
 
 def test_redact_value_nested_dict():
-    from app.core.logging import _redact_value
+    from copiloto_core.core.logging import _redact_value
     out = _redact_value({'phone': '+1', 'inner': {'email': 'x@y.co'}, 'other': 'safe'})
     assert out['phone'] == '[REDACTED]'
     # nested 'email' key gets redacted too
@@ -44,7 +44,7 @@ def test_redact_value_nested_dict():
 
 
 def test_redact_value_list_and_tuple():
-    from app.core.logging import _redact_value
+    from copiloto_core.core.logging import _redact_value
     # Regex exige `\+\d{7,15}` — usamos 10 dígitos.
     out_l = _redact_value(['+5712345678', 'note'])
     assert out_l == ['[PHONE]', 'note']
@@ -53,80 +53,80 @@ def test_redact_value_list_and_tuple():
 
 
 def test_redact_value_passthrough_int_none():
-    from app.core.logging import _redact_value
+    from copiloto_core.core.logging import _redact_value
     assert _redact_value(123) == 123
     assert _redact_value(None) is None
 
 
 def test_redact_pii_top_level_keys():
-    from app.core.logging import _redact_pii
+    from copiloto_core.core.logging import _redact_pii
     out = _redact_pii(None, 'info', {'email': 'x@y.co', 'msg': 'hi'})
     assert out['email'] == '[REDACTED]'
     assert out['msg'] == 'hi'
 
 
 def test_configure_logging_default():
-    from app.core.logging import configure_logging
+    from copiloto_core.core.logging import configure_logging
     # No-op semánticamente (basicConfig sólo aplica la primera vez); verifica
     # que no levante.
     configure_logging()
 
 
 def test_configure_logging_debug():
-    from app.core.logging import configure_logging
+    from copiloto_core.core.logging import configure_logging
     configure_logging('DEBUG')
 
 
 def test_configure_logging_unknown_falls_to_info():
-    from app.core.logging import configure_logging
+    from copiloto_core.core.logging import configure_logging
     # Nivel desconocido → fallback INFO (no levanta).
     configure_logging('NONSENSE')
 
 
-# ─── app.services.metrics ──────────────────────────────────────────────────
+# ─── copiloto_core.services.metrics ──────────────────────────────────────────────────
 
 
 def test_render_latest_returns_bytes_and_content_type():
-    from app.services.metrics import render_latest
+    from copiloto_core.services.metrics import render_latest
     payload, ct = render_latest()
     assert isinstance(payload, bytes)
     assert 'text/plain' in ct or 'openmetrics' in ct
 
 
 def test_parse_ip_allowlist_empty():
-    from app.services.metrics import parse_ip_allowlist
+    from copiloto_core.services.metrics import parse_ip_allowlist
     assert parse_ip_allowlist('') == frozenset()
     assert parse_ip_allowlist(None) == frozenset()
 
 
 def test_parse_ip_allowlist_csv():
-    from app.services.metrics import parse_ip_allowlist
+    from copiloto_core.services.metrics import parse_ip_allowlist
     out = parse_ip_allowlist('10.0.0.1, 10.0.0.2 ,  10.0.0.3')
     assert out == frozenset({'10.0.0.1', '10.0.0.2', '10.0.0.3'})
 
 
 def test_ip_allowed_no_ip():
-    from app.services.metrics import ip_allowed
+    from copiloto_core.services.metrics import ip_allowed
     assert ip_allowed(None, ['1.2.3.4']) is False
 
 
 def test_ip_allowed_match():
-    from app.services.metrics import ip_allowed
+    from copiloto_core.services.metrics import ip_allowed
     assert ip_allowed('1.2.3.4', frozenset({'1.2.3.4'})) is True
 
 
 def test_ip_allowed_miss():
-    from app.services.metrics import ip_allowed
+    from copiloto_core.services.metrics import ip_allowed
     assert ip_allowed('9.9.9.9', frozenset({'1.2.3.4'})) is False
 
 
 def test_ip_allowed_accepts_list_input():
-    from app.services.metrics import ip_allowed
+    from copiloto_core.services.metrics import ip_allowed
     assert ip_allowed('1.2.3.4', ['1.2.3.4']) is True
 
 
 def test_set_active_rate_limiter_and_refresh_runtime():
-    from app.services import metrics as m
+    from copiloto_core.services import metrics as m
     fake_limiter = SimpleNamespace(size=42)
     m._set_active_rate_limiter(fake_limiter)
     m.refresh_runtime_metrics()
@@ -135,16 +135,16 @@ def test_set_active_rate_limiter_and_refresh_runtime():
 
 
 def test_refresh_runtime_metrics_ignores_ws_fanout_error(monkeypatch):
-    from app.services import metrics as m
+    from copiloto_core.services import metrics as m
     # Forzar error al importar ws_fanout dentro del try.
     import sys
-    sys.modules.pop('app.admin.ws_fanout', None)
+    sys.modules.pop('copiloto_core.admin.ws_fanout', None)
     # No need to actually mock — la función traga todo.
     m.refresh_runtime_metrics()
 
 
 def test_refresh_backup_age_metrics_happy():
-    from app.services.metrics import refresh_backup_age_metrics
+    from copiloto_core.services.metrics import refresh_backup_age_metrics
 
     class C:
         async def fetch(self, sql, *a):
@@ -158,7 +158,7 @@ def test_refresh_backup_age_metrics_happy():
 
 
 def test_refresh_backup_age_metrics_skips_none_age():
-    from app.services.metrics import refresh_backup_age_metrics
+    from copiloto_core.services.metrics import refresh_backup_age_metrics
 
     class C:
         async def fetch(self, sql, *a):
@@ -171,7 +171,7 @@ def test_refresh_backup_age_metrics_skips_none_age():
 
 
 def test_refresh_backup_age_metrics_swallows_db_error():
-    from app.services.metrics import refresh_backup_age_metrics
+    from copiloto_core.services.metrics import refresh_backup_age_metrics
 
     class C:
         async def fetch(self, sql, *a):
@@ -181,23 +181,23 @@ def test_refresh_backup_age_metrics_swallows_db_error():
     asyncio.run(refresh_backup_age_metrics(C()))
 
 
-# ─── app.main ──────────────────────────────────────────────────────────────
+# ─── copiloto_core.main ──────────────────────────────────────────────────────────────
 
 
 def test_client_ip_no_client():
-    from app.main import _client_ip
+    from copiloto_core.main import _client_ip
     req = SimpleNamespace(client=None)
     assert _client_ip(req) is None
 
 
 def test_client_ip_returns_host():
-    from app.main import _client_ip
+    from copiloto_core.main import _client_ip
     req = SimpleNamespace(client=SimpleNamespace(host='10.0.0.1'))
     assert _client_ip(req) == '10.0.0.1'
 
 
 def test_security_headers_constant():
-    from app.main import _SECURITY_HEADERS
+    from copiloto_core.main import _SECURITY_HEADERS
     assert 'Content-Security-Policy' in _SECURITY_HEADERS
     assert _SECURITY_HEADERS['X-Frame-Options'] == 'DENY'
     assert 'max-age=31536000' in _SECURITY_HEADERS['Strict-Transport-Security']
@@ -208,7 +208,7 @@ def test_security_headers_middleware_attaches_headers():
     un Response, y verifica que los headers se agregan."""
     from fastapi import Response
 
-    from app.main import _security_headers_middleware
+    from copiloto_core.main import _security_headers_middleware
 
     async def fake_call_next(req):
         return Response(content='ok')
@@ -223,7 +223,7 @@ def test_security_headers_middleware_no_overwrite():
     """Si la response ya trae el header, no se sobreescribe (setdefault)."""
     from fastapi import Response
 
-    from app.main import _security_headers_middleware
+    from copiloto_core.main import _security_headers_middleware
 
     async def fake_call_next(req):
         r = Response(content='ok')
@@ -236,8 +236,8 @@ def test_security_headers_middleware_no_overwrite():
 
 def test_lifespan_connects_and_closes(monkeypatch):
     """Verifica que `lifespan` llama db.connect y db.close en order."""
-    from app.main import lifespan
-    from app import main as main_mod
+    from copiloto_core.main import lifespan
+    from copiloto_core import main as main_mod
 
     # Mockear db.connect / close
     fake_db = SimpleNamespace()
@@ -256,7 +256,7 @@ def test_lifespan_connects_and_closes(monkeypatch):
 
 
 def test_create_app_returns_fastapi():
-    from app.main import create_app
+    from copiloto_core.main import create_app
     api = create_app()
     # Verifica que tenga la ruta /metrics registrada.
     routes = [r.path for r in api.routes if hasattr(r, 'path')]
@@ -267,7 +267,7 @@ def test_metrics_endpoint_403_without_allowlist(monkeypatch):
     """El endpoint /metrics se monta dinámicamente en create_app — la
     allowlist se inyecta desde settings al boot. Testeamos las dos ramas
     invocando la closure directamente."""
-    from app.main import create_app
+    from copiloto_core.main import create_app
     api = create_app()
     # Ubicamos el handler /metrics y lo invocamos directamente con un Request
     # mockeado cuyo client.host NO está en la allowlist (la allowlist real
@@ -298,8 +298,8 @@ def test_metrics_endpoint_200_with_allowlist(monkeypatch):
     real (porque la closure se crea en `create_app` y atrapa el valor en
     ese momento).
     """
-    from app import main as main_mod
-    import app.core.config as cfg
+    from copiloto_core import main as main_mod
+    import copiloto_core.core.config as cfg
 
     # Sobrescribir settings + parse_ip_allowlist para que la nueva closure
     # cree un allowlist con la IP de test.
@@ -328,7 +328,7 @@ def test_metrics_endpoint_200_with_allowlist(monkeypatch):
     assert result.status_code == 200
 
 
-# ─── app.admin.main — admin-panel container entrypoint ────────────────────
+# ─── copiloto_core.admin.main — admin-panel container entrypoint ────────────────────
 
 
 def test_admin_main_module_creates_app():
@@ -336,7 +336,7 @@ def test_admin_main_module_creates_app():
     en docker-compose.yml. Importarlo ejecuta `create_app()` a nivel de
     módulo. Verificamos que ese app expone el router admin (login/logout/
     callback)."""
-    from app.admin import main as admin_main
+    from copiloto_core.admin import main as admin_main
     api = admin_main.app
     # Routes del admin_router montadas — checkamos el endpoint canónico.
     paths = [r.path for r in api.routes if hasattr(r, 'path')]
@@ -345,6 +345,6 @@ def test_admin_main_module_creates_app():
 
 def test_admin_main_create_app_factory():
     """Llamada directa al factory devuelve una FastAPI nueva."""
-    from app.admin.main import create_app
+    from copiloto_core.admin.main import create_app
     api = create_app()
     assert api.title.endswith('Admin Panel')

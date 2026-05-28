@@ -1,4 +1,4 @@
-"""Tests unitarios para `app.services.email` — Resend wrapper + Noop + templates.
+"""Tests unitarios para `copiloto_core.services.email` — Resend wrapper + Noop + templates.
 
 No tocan red real: el ResendProvider se prueba con un FakeHttpClient
 inyectado en `httpx.AsyncClient` via monkeypatch.
@@ -11,7 +11,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.services.email import (
+from copiloto_core.services.email import (
     EmailMessage, EmailNotConfiguredError, EmailSendError, NoopProvider,
     ResendProvider, _redact_email, _resolve_resend_api_key,
     clear_email_provider_cache, get_email_provider,
@@ -43,7 +43,7 @@ def test_redact_email_invalid():
 
 
 def test_resolve_resend_api_key_plaintext(monkeypatch):
-    from app.services import email as email_mod
+    from copiloto_core.services import email as email_mod
     monkeypatch.setattr(
         email_mod, 'get_settings',
         lambda: SimpleNamespace(
@@ -54,7 +54,7 @@ def test_resolve_resend_api_key_plaintext(monkeypatch):
 
 
 def test_resolve_resend_api_key_file(monkeypatch, tmp_path):
-    from app.services import email as email_mod
+    from copiloto_core.services import email as email_mod
     key_file = tmp_path / 'k'
     key_file.write_text('re_from_file\n', encoding='utf-8')
     monkeypatch.setattr(
@@ -68,7 +68,7 @@ def test_resolve_resend_api_key_file(monkeypatch, tmp_path):
 
 
 def test_resolve_resend_api_key_none(monkeypatch):
-    from app.services import email as email_mod
+    from copiloto_core.services import email as email_mod
     monkeypatch.setattr(
         email_mod, 'get_settings',
         lambda: SimpleNamespace(resend_api_key=None, resend_api_key_file=None),
@@ -77,7 +77,7 @@ def test_resolve_resend_api_key_none(monkeypatch):
 
 
 def test_resolve_resend_api_key_file_missing(monkeypatch):
-    from app.services import email as email_mod
+    from copiloto_core.services import email as email_mod
     monkeypatch.setattr(
         email_mod, 'get_settings',
         lambda: SimpleNamespace(
@@ -235,7 +235,7 @@ def test_resend_provider_send_transport_error_raises(monkeypatch):
 
 
 def test_get_email_provider_returns_noop_without_key(monkeypatch):
-    from app.services import email as email_mod
+    from copiloto_core.services import email as email_mod
     monkeypatch.setattr(
         email_mod, 'get_settings',
         lambda: SimpleNamespace(
@@ -249,7 +249,7 @@ def test_get_email_provider_returns_noop_without_key(monkeypatch):
 
 
 def test_get_email_provider_returns_resend_with_key(monkeypatch):
-    from app.services import email as email_mod
+    from copiloto_core.services import email as email_mod
     monkeypatch.setattr(
         email_mod, 'get_settings',
         lambda: SimpleNamespace(
@@ -279,7 +279,7 @@ def test_email_not_configured_error_class():
 
 
 def test_render_invitation_email_es_basic():
-    from app.services.email_templates import render_invitation_email
+    from copiloto_core.services.email_templates import render_invitation_email
     rendered = render_invitation_email(
         invitee_email='ana@x.co',
         tenant_name='Clínica Norte',
@@ -303,7 +303,7 @@ def test_render_invitation_email_es_basic():
 
 def test_render_invitation_email_escapes_html_injection():
     """tenant_name malicioso no debe quebrar el HTML."""
-    from app.services.email_templates import render_invitation_email
+    from copiloto_core.services.email_templates import render_invitation_email
     rendered = render_invitation_email(
         invitee_email='x@y.co',
         tenant_name='<script>alert(1)</script>Evil',
@@ -321,7 +321,7 @@ def test_render_invitation_email_escapes_html_injection():
 
 
 def test_render_invitation_email_unknown_role_capitalizes():
-    from app.services.email_templates import render_invitation_email
+    from copiloto_core.services.email_templates import render_invitation_email
     rendered = render_invitation_email(
         invitee_email='x@y.co',
         tenant_name='T',
@@ -335,7 +335,7 @@ def test_render_invitation_email_unknown_role_capitalizes():
 
 
 def test_render_invitation_email_no_inviter_fallback():
-    from app.services.email_templates import render_invitation_email
+    from copiloto_core.services.email_templates import render_invitation_email
     rendered = render_invitation_email(
         invitee_email='x@y.co',
         tenant_name='T',

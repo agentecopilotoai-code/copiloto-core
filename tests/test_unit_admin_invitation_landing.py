@@ -15,7 +15,7 @@ from __future__ import annotations
 
 def _build_app():
     from fastapi import FastAPI
-    from app.admin import routes
+    from copiloto_core.admin import routes
 
     app = FastAPI()
     app.include_router(routes.router)
@@ -71,7 +71,7 @@ class _StubAsyncClient:
 
 def _patch_async_client(monkeypatch, **kwargs):
     """Reemplaza `httpx.AsyncClient` (usado por el handler `/i/{token}`)."""
-    from app.admin import routes
+    from copiloto_core.admin import routes
     stub = _StubAsyncClient(**kwargs)
     monkeypatch.setattr(
         routes.httpx, 'AsyncClient', lambda *a, **kw: stub,

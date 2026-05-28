@@ -1,6 +1,6 @@
 from pathlib import Path
 
-POOL = Path('app/db/pool.py')
+POOL = Path('copiloto_core/db/pool.py')
 
 
 def test_record_to_dict_converts_bytea_values_before_fastapi_encoding():

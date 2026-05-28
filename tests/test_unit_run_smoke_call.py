@@ -11,14 +11,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.base import (
     AudioResult,
     ImageResult,
     TextResult,
     TranscriptResult,
     VideoResult,
 )
-from app.platform_admin.admin_routes import (
+from copiloto_core.platform_admin.admin_routes import (
     TestProviderRequest,
     _run_smoke_call,
 )
@@ -241,7 +241,7 @@ def test_run_smoke_unsupported_modality():
 def test_smoke_test_happy_path_grok(monkeypatch):
     """Cubre el camino completo desde smoke_test_platform_ai_provider hasta
     _run_smoke_call con un provider mocked."""
-    from app.platform_admin import admin_routes as ar
+    from copiloto_core.platform_admin import admin_routes as ar
 
     # Encriptamos una key dummy con la master key real (de conftest).
     ct = ar._encrypt_secret('sk-grok-fake')
@@ -280,8 +280,8 @@ def test_smoke_test_happy_path_grok(monkeypatch):
 def test_smoke_test_provider_error_returns_ok_false(monkeypatch):
     """Si el adapter levanta una excepción del catálogo, smoke_test devuelve
     ok=False con error_class y detail (no 500)."""
-    from app.platform_admin import admin_routes as ar
-    from app.ai.providers.base import ProviderUnavailable
+    from copiloto_core.platform_admin import admin_routes as ar
+    from copiloto_core.ai.providers.base import ProviderUnavailable
 
     ct = ar._encrypt_secret('sk-grok-fake')
 
@@ -320,7 +320,7 @@ def test_smoke_test_provider_error_returns_ok_false(monkeypatch):
 def test_update_tenant_module_409_missing_required_modalities(monkeypatch):
     """Si el módulo declara modalidades IA requeridas y faltan, 409."""
     from fastapi import HTTPException
-    from app.platform_admin import admin_routes as ar
+    from copiloto_core.platform_admin import admin_routes as ar
     from uuid import uuid4
 
     # Inyectar una declaración temporal para el módulo 'demo_with_llm'.

@@ -1,8 +1,20 @@
 [project]
-name = "copilotoia-core"
-version = "0.1.0"
-description = "Core multitenant event-driven para Copiloto IA"
+name = "copiloto-core"
+version = "1.0.0"
+description = "Sistema operativo multi-tenant para construir SaaS verticales sobre una base común de auth, RBAC, IA dispatch, billing, observabilidad y operaciones."
+readme = "README.md"
 requires-python = ">=3.12"
+license = {text = "Proprietary"}
+authors = [{name = "Agente Copiloto IA"}]
+keywords = ["multi-tenant", "saas", "rbac", "auth0", "rls", "fastapi"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Framework :: FastAPI",
+  "Intended Audience :: Developers",
+  "Operating System :: POSIX",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
 dependencies = [
   # M41 — dependencias purgadas en el audit pass (0 imports en app/ tras
   # la limpieza del branch core): passlib, boto3, pypdf, python-docx,
@@ -30,7 +42,7 @@ dependencies = [
 
 [project.optional-dependencies]
 # `pytest-cov` es requerido por el job `coverage-gate` del CI
-# (.github/workflows/ci.yml) que corre `pytest --cov=app --cov-fail-under=93`.
+# (.github/workflows/ci.yml) que corre `pytest --cov=copiloto_core --cov-fail-under=93`.
 # Sin él, pytest rechaza los flags `--cov*` con `unrecognized arguments` y
 # el CI bloquea cualquier PR.
 # Mantener pineado por compatibilidad determinista — bumpear junto al
@@ -49,7 +61,20 @@ line-length = 100
 target-version = "py312"
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["copiloto_core*"]
+
+# Incluir SQL migrations, templates de email, assets estáticos
+# como package-data (van DENTRO del wheel) — sin esto, los
+# módulos consumidores no podrían acceder a las migrations del core.
+[tool.setuptools.package-data]
+"copiloto_core" = [
+  "**/*.sql",
+  "**/*.html",
+  "**/*.txt",
+  "**/*.json",
+  "**/*.yaml",
+  "admin/static/dist/**/*",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

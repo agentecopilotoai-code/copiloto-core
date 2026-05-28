@@ -95,31 +95,31 @@ psql_app() {
 TABLE_COUNTS_SQL="
 with counts(table_name, row_count) as (
   values
-    ('tenants', (select count(*)::bigint from app.tenants)),
-    ('tenant_settings', (select count(*)::bigint from app.tenant_settings)),
-    ('tenant_channels', (select count(*)::bigint from app.tenant_channels)),
-    ('contacts', (select count(*)::bigint from app.contacts)),
-    ('conversations', (select count(*)::bigint from app.conversations)),
-    ('messages', (select count(*)::bigint from app.messages)),
-    ('message_status_events', (select count(*)::bigint from app.message_status_events)),
-    ('knowledge_documents', (select count(*)::bigint from app.knowledge_documents)),
-    ('knowledge_chunks', (select count(*)::bigint from app.knowledge_chunks)),
-    ('domain_events', (select count(*)::bigint from app.domain_events)),
-    ('audit_logs', (select count(*)::bigint from app.audit_logs))
+    ('tenants', (select count(*)::bigint from copiloto_core.tenants)),
+    ('tenant_settings', (select count(*)::bigint from copiloto_core.tenant_settings)),
+    ('tenant_channels', (select count(*)::bigint from copiloto_core.tenant_channels)),
+    ('contacts', (select count(*)::bigint from copiloto_core.contacts)),
+    ('conversations', (select count(*)::bigint from copiloto_core.conversations)),
+    ('messages', (select count(*)::bigint from copiloto_core.messages)),
+    ('message_status_events', (select count(*)::bigint from copiloto_core.message_status_events)),
+    ('knowledge_documents', (select count(*)::bigint from copiloto_core.knowledge_documents)),
+    ('knowledge_chunks', (select count(*)::bigint from copiloto_core.knowledge_chunks)),
+    ('domain_events', (select count(*)::bigint from copiloto_core.domain_events)),
+    ('audit_logs', (select count(*)::bigint from copiloto_core.audit_logs))
 )
 select table_name || E'\t' || row_count from counts order by table_name;
 "
 
 NON_EMPTY_SQL="
 select coalesce(sum(row_count), 0) from (
-  select count(*)::bigint as row_count from app.contacts
-  union all select count(*)::bigint from app.conversations
-  union all select count(*)::bigint from app.messages
-  union all select count(*)::bigint from app.message_status_events
-  union all select count(*)::bigint from app.knowledge_documents
-  union all select count(*)::bigint from app.knowledge_chunks
-  union all select count(*)::bigint from app.domain_events
-  union all select count(*)::bigint from app.audit_logs
+  select count(*)::bigint as row_count from copiloto_core.contacts
+  union all select count(*)::bigint from copiloto_core.conversations
+  union all select count(*)::bigint from copiloto_core.messages
+  union all select count(*)::bigint from copiloto_core.message_status_events
+  union all select count(*)::bigint from copiloto_core.knowledge_documents
+  union all select count(*)::bigint from copiloto_core.knowledge_chunks
+  union all select count(*)::bigint from copiloto_core.domain_events
+  union all select count(*)::bigint from copiloto_core.audit_logs
 ) s;
 "
 

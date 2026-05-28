@@ -15,16 +15,16 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.ai.dispatcher import (
+from copiloto_core.ai.dispatcher import (
     CB_FAILURE_THRESHOLD,
     _breakers_reset,
     dispatch,
 )
-from app.ai.registry import (
+from copiloto_core.ai.registry import (
     ResolvedProvider,
     _cache_invalidate,
 )
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.base import (
     ProviderContentRejected,
     ProviderTimeoutError,
     ProviderUnavailable,

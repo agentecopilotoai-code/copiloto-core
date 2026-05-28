@@ -1,4 +1,4 @@
-"""M45 — cobertura del módulo `app.db.pool` (antes 32% → casi 100%).
+"""M45 — cobertura del módulo `copiloto_core.db.pool` (antes 32% → casi 100%).
 
 No abre un Pool real (eso requiere Postgres). Mockea `asyncpg.create_pool`
 + los métodos de conexión para ejercitar TODO el code path: pool
@@ -19,8 +19,8 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from app.db import pool as pool_module
-from app.db.pool import (
+from copiloto_core.db import pool as pool_module
+from copiloto_core.db.pool import (
     Database,
     _json_safe_value,
     get_db,
@@ -110,7 +110,7 @@ def test_database_connect_falls_back_when_settings_fail(monkeypatch):
         return MagicMock()
 
     monkeypatch.setattr(pool_module.asyncpg, 'create_pool', fake_create_pool)
-    import app.core.config as cfg
+    import copiloto_core.core.config as cfg
 
     def boom():
         raise RuntimeError('no settings')

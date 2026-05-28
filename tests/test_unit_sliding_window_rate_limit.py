@@ -1,4 +1,4 @@
-"""Tests para `app.services.sliding_window_rate_limit` (P1-3 audit 2026-05-27)."""
+"""Tests para `copiloto_core.services.sliding_window_rate_limit` (P1-3 audit 2026-05-27)."""
 from __future__ import annotations
 
 import asyncio
@@ -8,13 +8,13 @@ import pytest
 
 
 def test_check_admits_first_call_returns_true():
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(max_calls=3, window_seconds=60)
     assert asyncio.run(limiter.check('user-1')) is True
 
 
 def test_check_rejects_call_above_max():
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(max_calls=2, window_seconds=60)
     assert asyncio.run(limiter.check('u')) is True
     assert asyncio.run(limiter.check('u')) is True
@@ -22,7 +22,7 @@ def test_check_rejects_call_above_max():
 
 
 def test_check_distinct_keys_isolated():
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(max_calls=1, window_seconds=60)
     assert asyncio.run(limiter.check('a')) is True
     assert asyncio.run(limiter.check('b')) is True
@@ -33,7 +33,7 @@ def test_check_distinct_keys_isolated():
 
 def test_check_allows_after_window_passes():
     """Sliding-window: timestamps fuera del window se descartan."""
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(max_calls=1, window_seconds=0.5)
     assert asyncio.run(limiter.check('u')) is True
     assert asyncio.run(limiter.check('u')) is False  # rechazado
@@ -45,7 +45,7 @@ def test_check_allows_after_window_passes():
 def test_check_or_raise_raises_429():
     from fastapi import HTTPException
 
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(max_calls=1, window_seconds=60)
     asyncio.run(limiter.check_or_raise('u'))  # ok
     with pytest.raises(HTTPException) as exc:
@@ -55,7 +55,7 @@ def test_check_or_raise_raises_429():
 
 def test_lru_eviction_when_exceeds_max_entries():
     """Cap LRU: tras N keys distintas, las más viejas se evictean."""
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(
         max_calls=10, window_seconds=60, max_entries=3,
     )
@@ -73,7 +73,7 @@ def test_lru_eviction_when_exceeds_max_entries():
 
 
 def test_reset_clears_all_buckets():
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     limiter = SlidingWindowLimiter(max_calls=1, window_seconds=60)
     asyncio.run(limiter.check('u'))
     assert asyncio.run(limiter.check('u')) is False
@@ -82,7 +82,7 @@ def test_reset_clears_all_buckets():
 
 
 def test_init_validation():
-    from app.services.sliding_window_rate_limit import SlidingWindowLimiter
+    from copiloto_core.services.sliding_window_rate_limit import SlidingWindowLimiter
     with pytest.raises(ValueError):
         SlidingWindowLimiter(max_calls=0, window_seconds=60)
     with pytest.raises(ValueError):
@@ -95,7 +95,7 @@ def test_init_validation():
 
 def test_sync_adapter():
     """`_build_sync_check` para call sites que no son async."""
-    from app.services.sliding_window_rate_limit import (
+    from copiloto_core.services.sliding_window_rate_limit import (
         SlidingWindowLimiter, _build_sync_check,
     )
     limiter = SlidingWindowLimiter(max_calls=2, window_seconds=60)

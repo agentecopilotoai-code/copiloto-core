@@ -20,15 +20,15 @@ from pathlib import Path
 
 import pytest
 
-from app.ai.providers import grok as grok_module
-from app.ai.providers.base import (
+from copiloto_core.ai.providers import grok as grok_module
+from copiloto_core.ai.providers.base import (
     ImageProvider,
     LLMProvider,
     STTProvider,
     TTSProvider,
     VideoProvider,
 )
-from app.ai.providers.grok import GROK_MODELS, GrokProvider
+from copiloto_core.ai.providers.grok import GROK_MODELS, GrokProvider
 
 SOURCE = Path(grok_module.__file__).read_text(encoding='utf-8')
 

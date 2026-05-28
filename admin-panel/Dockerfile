@@ -22,8 +22,8 @@ COPY pyproject.toml ./
 RUN pip install --upgrade pip \
     && pip install .
 
-COPY app ./app
-COPY --from=web-build /web/dist ./app/admin/static/dist
+COPY copiloto_core ./copiloto_core
+COPY --from=web-build /web/dist ./copiloto_core/admin/static/dist
 
 # SEC-020-N (audit#4) — non-root user. Crear ANTES de cambiar owner
 # para que el COPY anterior se haga como root (default) y luego
@@ -35,4 +35,4 @@ RUN groupadd --system --gid 10001 copiloto \
     && chown -R copiloto:copiloto /app
 USER copiloto
 
-CMD ["python3", "-m", "uvicorn", "app.admin.main:app", "--host", "0.0.0.0", "--port", "3000"]
+CMD ["python3", "-m", "uvicorn", "copiloto_core.admin.main:app", "--host", "0.0.0.0", "--port", "3000"]

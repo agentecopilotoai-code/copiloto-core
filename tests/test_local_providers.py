@@ -12,7 +12,7 @@ import base64
 import httpx
 import pytest
 
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.base import (
     ImageResult,
     PersonaAnchor,
     ProviderContentRejected,
@@ -21,9 +21,9 @@ from app.ai.providers.base import (
     TextResult,
     TranscriptResult,
 )
-from app.ai.providers.local_sdxl import LocalSDXLProvider
-from app.ai.providers.local_whisper import LocalWhisperProvider
-from app.ai.providers.ollama import OllamaProvider
+from copiloto_core.ai.providers.local_sdxl import LocalSDXLProvider
+from copiloto_core.ai.providers.local_whisper import LocalWhisperProvider
+from copiloto_core.ai.providers.ollama import OllamaProvider
 
 
 def _anchor() -> PersonaAnchor:

@@ -18,22 +18,22 @@ def _run(c):
 
 def test_active_session_id_none_input():
     import asyncio
-    from app.admin.routes import _active_session_id
+    from copiloto_core.admin.routes import _active_session_id
     assert asyncio.run(_active_session_id(None)) is None
     assert asyncio.run(_active_session_id('')) is None
 
 
 def test_active_session_id_unknown_session():
     import asyncio
-    from app.admin.routes import _active_session_id
+    from copiloto_core.admin.routes import _active_session_id
     assert asyncio.run(_active_session_id('nonexistent')) is None
 
 
 def test_active_session_id_expired_session():
     """P0-3: el store rechaza expired sessions internamente."""
     import asyncio
-    from app.admin.routes import _active_session_id
-    from app.admin.session_store import get_session_store
+    from copiloto_core.admin.routes import _active_session_id
+    from copiloto_core.admin.session_store import get_session_store
     store = get_session_store()
     # `set` con TTL=1s — luego sleep para forzar expiry.
     asyncio.run(store.set('expired-sid', {'profile': {}}, ttl_seconds=1))
@@ -43,8 +43,8 @@ def test_active_session_id_expired_session():
 
 def test_active_session_id_valid_session():
     import asyncio
-    from app.admin.routes import _active_session_id
-    from app.admin.session_store import get_session_store
+    from copiloto_core.admin.routes import _active_session_id
+    from copiloto_core.admin.session_store import get_session_store
     store = get_session_store()
     asyncio.run(store.set('valid-sid', {'profile': {'sub': 'u|1'}}, 60))
     out = asyncio.run(_active_session_id('valid-sid'))
@@ -56,45 +56,45 @@ def test_active_session_id_valid_session():
 
 
 def test_role_at_least_equal_passes():
-    from app.admin.routes import _role_at_least
+    from copiloto_core.admin.routes import _role_at_least
     assert _role_at_least('admin', 'admin') is True
 
 
 def test_role_at_least_higher_passes():
-    from app.admin.routes import _role_at_least
+    from copiloto_core.admin.routes import _role_at_least
     assert _role_at_least('owner', 'admin') is True
 
 
 def test_role_at_least_lower_fails():
-    from app.admin.routes import _role_at_least
+    from copiloto_core.admin.routes import _role_at_least
     assert _role_at_least('viewer', 'admin') is False
 
 
 def test_role_at_least_unknown_role_zero():
-    from app.admin.routes import _role_at_least
+    from copiloto_core.admin.routes import _role_at_least
     assert _role_at_least('nonexistent_role', 'admin') is False
 
 
 def test_has_admin_role_yes():
-    from app.admin.routes import _has_admin_role
+    from copiloto_core.admin.routes import _has_admin_role
     session = {'profile': {'roles': ['admin']}}
     assert _has_admin_role(session, 'admin') is True
 
 
 def test_has_admin_role_no():
-    from app.admin.routes import _has_admin_role
+    from copiloto_core.admin.routes import _has_admin_role
     session = {'profile': {'roles': ['agent']}}
     assert _has_admin_role(session, 'admin') is False
 
 
 def test_has_admin_role_no_roles_key():
-    from app.admin.routes import _has_admin_role
+    from copiloto_core.admin.routes import _has_admin_role
     session = {'profile': {}}
     assert _has_admin_role(session, 'agent') is False
 
 
 def test_has_admin_role_no_profile():
-    from app.admin.routes import _has_admin_role
+    from copiloto_core.admin.routes import _has_admin_role
     assert _has_admin_role({}, 'agent') is False
 
 
@@ -102,26 +102,26 @@ def test_has_admin_role_no_profile():
 
 
 def test_session_claim_matches_tenant_valid():
-    from app.admin.routes import _session_claim_matches_tenant
+    from copiloto_core.admin.routes import _session_claim_matches_tenant
     tid = uuid4()
     session = {'profile': {'tenant_id': str(tid)}}
     assert _session_claim_matches_tenant(session, tid) is True
 
 
 def test_session_claim_matches_tenant_mismatch():
-    from app.admin.routes import _session_claim_matches_tenant
+    from copiloto_core.admin.routes import _session_claim_matches_tenant
     session = {'profile': {'tenant_id': str(uuid4())}}
     assert _session_claim_matches_tenant(session, uuid4()) is False
 
 
 def test_session_claim_matches_tenant_invalid_uuid():
-    from app.admin.routes import _session_claim_matches_tenant
+    from copiloto_core.admin.routes import _session_claim_matches_tenant
     session = {'profile': {'tenant_id': 'not-a-uuid'}}
     assert _session_claim_matches_tenant(session, uuid4()) is False
 
 
 def test_session_claim_matches_tenant_none_claim():
-    from app.admin.routes import _session_claim_matches_tenant
+    from copiloto_core.admin.routes import _session_claim_matches_tenant
     session = {'profile': {}}
     assert _session_claim_matches_tenant(session, uuid4()) is False
 
@@ -132,11 +132,11 @@ def test_session_claim_matches_tenant_none_claim():
 def test_session_can_stream_support_mode_with_agent_role():
     """A2: el support_mode shortcut SOLO aplica si la cookie firmada
     matchea el tenant_id. El claim cacheado solo NO basta."""
-    from app.admin.routes import _session_can_stream_tenant
+    from copiloto_core.admin.routes import _session_can_stream_tenant
     session = {'profile': {'support_mode': True, 'roles': ['agent']}}
     tenant_id = uuid4()
     # Sin cookie tid → cae al DB-check.
-    from app.db.pool import db
+    from copiloto_core.db.pool import db
     original_pool = db.pool
     db.pool = None
     try:
@@ -153,9 +153,9 @@ def test_session_can_stream_support_mode_with_agent_role():
 
 def test_session_can_stream_support_cookie_different_tenant():
     """Cookie matching tenant A NO autoriza WS para tenant B."""
-    from app.admin.routes import _session_can_stream_tenant
+    from copiloto_core.admin.routes import _session_can_stream_tenant
     session = {'profile': {'support_mode': True, 'roles': ['agent']}}
-    from app.db.pool import db
+    from copiloto_core.db.pool import db
     original_pool = db.pool
     db.pool = None
     try:
@@ -168,10 +168,10 @@ def test_session_can_stream_support_cookie_different_tenant():
 
 
 def test_session_can_stream_support_mode_without_role():
-    from app.admin.routes import _session_can_stream_tenant
+    from copiloto_core.admin.routes import _session_can_stream_tenant
     session = {'profile': {'support_mode': True, 'roles': []}}
     # Falls through to DB check, which we mock via no pool
-    from app.db.pool import db
+    from copiloto_core.db.pool import db
     original_pool = db.pool
     db.pool = None
     try:
@@ -182,15 +182,15 @@ def test_session_can_stream_support_mode_without_role():
 
 
 def test_session_can_stream_no_sub():
-    from app.admin.routes import _session_can_stream_tenant
+    from copiloto_core.admin.routes import _session_can_stream_tenant
     session = {'profile': {}}
     out = _run(_session_can_stream_tenant(session, uuid4()))
     assert out is False
 
 
 def test_session_can_stream_no_pool():
-    from app.admin.routes import _session_can_stream_tenant
-    from app.db.pool import db
+    from copiloto_core.admin.routes import _session_can_stream_tenant
+    from copiloto_core.db.pool import db
     session = {'profile': {'sub': 'u|1'}}
     original_pool = db.pool
     db.pool = None
@@ -205,7 +205,7 @@ def test_session_can_stream_no_pool():
 
 
 def test_pack_and_unpack_state_roundtrip():
-    from app.admin.routes import _pack_state, _unpack_state
+    from copiloto_core.admin.routes import _pack_state, _unpack_state
     payload = {'state': 'abc', 'foo': 1}
     packed = _pack_state(payload)
     out = _unpack_state(packed)
@@ -214,12 +214,12 @@ def test_pack_and_unpack_state_roundtrip():
 
 
 def test_unpack_state_invalid_returns_none():
-    from app.admin.routes import _unpack_state
+    from copiloto_core.admin.routes import _unpack_state
     assert _unpack_state('tampered.value.x') is None
 
 
 def test_sign_returns_signed():
-    from app.admin.routes import _sign
+    from copiloto_core.admin.routes import _sign
     out = _sign('hello')
     # The signed value should differ from input
     assert out != 'hello'
@@ -229,8 +229,8 @@ def test_sign_returns_signed():
 
 
 def test_namespaced_claim_with_value():
-    from app.admin.routes import _namespaced_claim
-    from app.admin.config import get_admin_settings
+    from copiloto_core.admin.routes import _namespaced_claim
+    from copiloto_core.admin.config import get_admin_settings
     settings = get_admin_settings()
     ns = settings.auth0_claims_namespace.rstrip('/')
     claims = {f'{ns}/roles': ['admin']}
@@ -238,7 +238,7 @@ def test_namespaced_claim_with_value():
 
 
 def test_namespaced_claim_default():
-    from app.admin.routes import _namespaced_claim
+    from copiloto_core.admin.routes import _namespaced_claim
     out = _namespaced_claim({}, 'missing', default='fallback')
     assert out == 'fallback'
 
@@ -247,19 +247,19 @@ def test_namespaced_claim_default():
 
 
 def test_core_api_url_basic():
-    from app.admin.routes import _core_api_url
+    from copiloto_core.admin.routes import _core_api_url
     out = _core_api_url('/v1/users')
     assert out.endswith('/v1/users')
 
 
 def test_core_api_url_strips_leading_slash():
-    from app.admin.routes import _core_api_url
+    from copiloto_core.admin.routes import _core_api_url
     out = _core_api_url('v1/users')
     assert '/v1/users' in out
 
 
 def test_core_api_url_with_query():
-    from app.admin.routes import _core_api_url
+    from copiloto_core.admin.routes import _core_api_url
     out = _core_api_url('/v1/users', query='page=1&size=10')
     assert '?page=1&size=10' in out
 
@@ -268,7 +268,7 @@ def test_core_api_url_with_query():
 
 
 def test_core_api_headers_basic():
-    from app.admin.routes import _core_api_headers
+    from copiloto_core.admin.routes import _core_api_headers
     request = SimpleNamespace(
         headers={'accept': 'application/json', 'content-type': 'application/json',
                  'x-tenant-id': str(uuid4()), 'idempotency-key': 'idem-1'},
@@ -289,7 +289,7 @@ def test_core_api_headers_basic():
 
 
 def test_core_api_headers_no_body_no_content_type():
-    from app.admin.routes import _core_api_headers
+    from copiloto_core.admin.routes import _core_api_headers
     request = SimpleNamespace(headers={}, cookies={})
     session = {'access_token': 'tok', 'profile': {}}
     out = _core_api_headers(request, session, has_body=False)
@@ -297,7 +297,7 @@ def test_core_api_headers_no_body_no_content_type():
 
 
 def test_core_api_headers_forwards_support_mode_cookie():
-    from app.admin.routes import _core_api_headers
+    from copiloto_core.admin.routes import _core_api_headers
     request = SimpleNamespace(headers={}, cookies={'copilotoia_support_mode': 'signed-value'})
     session = {'access_token': 'tok', 'profile': {}}
     out = _core_api_headers(request, session, has_body=False)
@@ -306,7 +306,7 @@ def test_core_api_headers_forwards_support_mode_cookie():
 
 def test_core_api_headers_no_email_no_identity():
     """If no sub+email in profile, no x-admin-identity header."""
-    from app.admin.routes import _core_api_headers
+    from copiloto_core.admin.routes import _core_api_headers
     request = SimpleNamespace(headers={}, cookies={})
     session = {'access_token': 'tok', 'profile': {}}
     out = _core_api_headers(request, session, has_body=False)
@@ -317,8 +317,8 @@ def test_core_api_headers_no_email_no_identity():
 
 
 def test_auth0_base_url_returns_url(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _auth0_base_url
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _auth0_base_url
     fake_settings = SimpleNamespace(auth0_domain='test.auth0.com')
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     out = _auth0_base_url()
@@ -326,8 +326,8 @@ def test_auth0_base_url_returns_url(monkeypatch):
 
 
 def test_auth0_base_url_strips_trailing_slash(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _auth0_base_url
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _auth0_base_url
     fake_settings = SimpleNamespace(auth0_domain='test.auth0.com/')
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     out = _auth0_base_url()
@@ -336,8 +336,8 @@ def test_auth0_base_url_strips_trailing_slash(monkeypatch):
 
 def test_auth0_base_url_no_domain_raises(monkeypatch):
     from fastapi import HTTPException
-    from app.admin import routes
-    from app.admin.routes import _auth0_base_url
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _auth0_base_url
     fake_settings = SimpleNamespace(auth0_domain=None)
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     with pytest.raises(HTTPException) as exc:
@@ -346,8 +346,8 @@ def test_auth0_base_url_no_domain_raises(monkeypatch):
 
 
 def test_admin_client_secret_from_env(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _admin_client_secret
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _admin_client_secret
     fake_settings = SimpleNamespace(
         auth0_admin_client_secret='direct-secret',
         auth0_admin_client_secret_file=None,
@@ -357,8 +357,8 @@ def test_admin_client_secret_from_env(monkeypatch):
 
 
 def test_admin_client_secret_from_file(monkeypatch, tmp_path):
-    from app.admin import routes
-    from app.admin.routes import _admin_client_secret
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _admin_client_secret
     f = tmp_path / 'secret.txt'
     f.write_text('file-secret\n')
     fake_settings = SimpleNamespace(
@@ -371,8 +371,8 @@ def test_admin_client_secret_from_file(monkeypatch, tmp_path):
 
 def test_admin_client_secret_not_configured(monkeypatch):
     from fastapi import HTTPException
-    from app.admin import routes
-    from app.admin.routes import _admin_client_secret
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _admin_client_secret
     fake_settings = SimpleNamespace(
         auth0_admin_client_secret=None,
         auth0_admin_client_secret_file=None,
@@ -387,8 +387,8 @@ def test_admin_client_secret_not_configured(monkeypatch):
 
 
 def test_callback_url_picks_https_first(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _callback_url
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _callback_url
     fake_settings = SimpleNamespace(
         auth0_callback_urls='https://x.com/cb,http://localhost:3000/cb',
     )
@@ -400,7 +400,7 @@ def test_callback_url_picks_https_first(monkeypatch):
 
 
 def test_callback_url_localhost_allowed():
-    from app.admin.routes import _callback_url
+    from copiloto_core.admin.routes import _callback_url
     request = SimpleNamespace(url_for=lambda name: 'http://default/cb')
     out = _callback_url(request)
     # The real settings might have an http://localhost:3000/ value
@@ -412,8 +412,8 @@ def test_callback_url_localhost_allowed():
 
 
 def test_logout_return_to_returns_admin_normalized(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _logout_return_to
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _logout_return_to
     fake_settings = SimpleNamespace(
         auth0_logout_urls='https://x.com/admin',
     )
@@ -424,8 +424,8 @@ def test_logout_return_to_returns_admin_normalized(monkeypatch):
 
 
 def test_logout_return_to_fallback_first_url(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _logout_return_to
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _logout_return_to
     fake_settings = SimpleNamespace(
         auth0_logout_urls='https://x.com/somewhere',
     )
@@ -436,8 +436,8 @@ def test_logout_return_to_fallback_first_url(monkeypatch):
 
 
 def test_logout_return_to_empty_url_list(monkeypatch):
-    from app.admin import routes
-    from app.admin.routes import _logout_return_to
+    from copiloto_core.admin import routes
+    from copiloto_core.admin.routes import _logout_return_to
     fake_settings = SimpleNamespace(auth0_logout_urls='')
     monkeypatch.setattr(routes, 'get_admin_settings', lambda: fake_settings)
     request = SimpleNamespace(url_for=lambda name: 'http://default/admin')
@@ -450,15 +450,15 @@ def test_logout_return_to_empty_url_list(monkeypatch):
 
 def test_active_session_no_cookie():
     import asyncio
-    from app.admin.routes import _active_session
+    from copiloto_core.admin.routes import _active_session
     request = SimpleNamespace(cookies={})
     assert asyncio.run(_active_session(request)) is None
 
 
 def test_active_session_with_cookie():
     import asyncio
-    from app.admin.routes import _active_session, SESSION_COOKIE
-    from app.admin.session_store import get_session_store
+    from copiloto_core.admin.routes import _active_session, SESSION_COOKIE
+    from copiloto_core.admin.session_store import get_session_store
     asyncio.run(get_session_store().set('live-sid', {'profile': {}}, 100))
     request = SimpleNamespace(cookies={SESSION_COOKIE: 'live-sid'})
     out = asyncio.run(_active_session(request))
@@ -471,7 +471,7 @@ def test_active_session_with_cookie():
 def test_dist_file_path_traversal_blocked():
     """Path traversal attempt should raise 503."""
     from fastapi import HTTPException
-    from app.admin.routes import _dist_file
+    from copiloto_core.admin.routes import _dist_file
     with pytest.raises(HTTPException) as exc:
         _dist_file('../../../etc/passwd')
     assert exc.value.status_code == 503
@@ -479,7 +479,7 @@ def test_dist_file_path_traversal_blocked():
 
 def test_dist_file_nonexistent_raises():
     from fastapi import HTTPException
-    from app.admin.routes import _dist_file
+    from copiloto_core.admin.routes import _dist_file
     with pytest.raises(HTTPException):
         _dist_file('definitely-does-not-exist-asdf.html')
 
@@ -489,7 +489,7 @@ def test_dist_file_nonexistent_raises():
 
 def test_debug_helper_noop_when_disabled(monkeypatch, capsys):
     """Cuando BFF_DEBUG=0 (default), `_debug()` no imprime nada."""
-    from app.admin import routes as ar
+    from copiloto_core.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', False)
     ar._debug('test_stage', foo='bar')
     out = capsys.readouterr().err
@@ -498,7 +498,7 @@ def test_debug_helper_noop_when_disabled(monkeypatch, capsys):
 
 def test_debug_helper_prints_when_enabled(monkeypatch, capsys):
     """Cuando BFF_DEBUG=1, imprime una línea con stage + key=val."""
-    from app.admin import routes as ar
+    from copiloto_core.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', True)
     ar._debug('test_stage', foo='bar', count=42)
     out = capsys.readouterr().err
@@ -511,7 +511,7 @@ def test_debug_helper_prints_when_enabled(monkeypatch, capsys):
 def test_debug_helper_redacts_sensitive_keys(monkeypatch, capsys):
     """Cualquier key con 'secret', 'token', 'code', 'state', 'sid', 'cookie'
     en el nombre se trunca a 8 chars para no leakear credenciales."""
-    from app.admin import routes as ar
+    from copiloto_core.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', True)
     ar._debug(
         'test',
@@ -530,7 +530,7 @@ def test_debug_helper_redacts_sensitive_keys(monkeypatch, capsys):
 
 def test_debug_helper_handles_none(monkeypatch, capsys):
     """None se muestra como ∅ para distinguir de string vacío."""
-    from app.admin import routes as ar
+    from copiloto_core.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', True)
     ar._debug('test', value=None)
     out = capsys.readouterr().err
@@ -544,7 +544,7 @@ def test_should_redact_exact_keys():
     """M52 — redacción solo por match EXACTO. Antes el matcher por
     substring redactaba `id_token_keys` (que NO es un secret) porque
     contenía la palabra 'token'."""
-    from app.admin.routes import _should_redact
+    from copiloto_core.admin.routes import _should_redact
     # Keys sensibles → redact
     assert _should_redact('secret') is True
     assert _should_redact('access_token') is True
@@ -569,7 +569,7 @@ def test_should_redact_exact_keys():
 def test_debug_helper_no_longer_redacts_diagnostic_keys(monkeypatch, capsys):
     """Regresion test: `id_token_keys=['aud','sub',...]` debe imprimir
     el array COMPLETO sin truncar a 8 chars."""
-    from app.admin import routes as ar
+    from copiloto_core.admin import routes as ar
     monkeypatch.setattr(ar, '_BFF_DEBUG', True)
     ar._debug(
         'inspect',

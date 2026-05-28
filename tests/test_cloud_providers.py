@@ -19,8 +19,8 @@ import base64
 import httpx
 import pytest
 
-from app.ai.providers.anthropic import AnthropicProvider, DEFAULT_MODEL
-from app.ai.providers.base import (
+from copiloto_core.ai.providers.anthropic import AnthropicProvider, DEFAULT_MODEL
+from copiloto_core.ai.providers.base import (
     AudioResult,
     ImageResult,
     PersonaAnchor,
@@ -31,8 +31,8 @@ from app.ai.providers.base import (
     TextResult,
     TranscriptResult,
 )
-from app.ai.providers.elevenlabs import ElevenLabsProvider
-from app.ai.providers.openai import OPENAI_MODELS, OpenAIProvider
+from copiloto_core.ai.providers.elevenlabs import ElevenLabsProvider
+from copiloto_core.ai.providers.openai import OPENAI_MODELS, OpenAIProvider
 
 
 def _anchor() -> PersonaAnchor:

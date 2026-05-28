@@ -1,11 +1,11 @@
 """M45.3 — completar cobertura de lines remanentes que no caen en otros suites.
 
 Cubre:
-  - app.core.signed_cookies.unpack_signed_payload — invalid JSON branch.
-  - app.services.rate_limit.build_rate_limit_middleware — 429 path.
-  - app.api.v1.schemas — TENANT_SLUG_PATTERN exporta, _validate_iana_timezone
+  - copiloto_core.core.signed_cookies.unpack_signed_payload — invalid JSON branch.
+  - copiloto_core.services.rate_limit.build_rate_limit_middleware — 429 path.
+  - copiloto_core.api.v1.schemas — TENANT_SLUG_PATTERN exporta, _validate_iana_timezone
     con valores raros.
-  - app.api.v1.handlers.tenant_signup_handlers — branch sin tz custom.
+  - copiloto_core.api.v1.handlers.tenant_signup_handlers — branch sin tz custom.
 """
 from __future__ import annotations
 
@@ -22,17 +22,17 @@ import pytest
 
 
 def test_unpack_signed_payload_empty():
-    from app.core.signed_cookies import unpack_signed_payload
+    from copiloto_core.core.signed_cookies import unpack_signed_payload
     assert unpack_signed_payload('secret', '') is None
 
 
 def test_unpack_signed_payload_no_separator():
-    from app.core.signed_cookies import unpack_signed_payload
+    from copiloto_core.core.signed_cookies import unpack_signed_payload
     assert unpack_signed_payload('secret', 'noseparator') is None
 
 
 def test_unpack_signed_payload_invalid_signature():
-    from app.core.signed_cookies import unpack_signed_payload
+    from copiloto_core.core.signed_cookies import unpack_signed_payload
     # raw = base64 valid JSON, signature deliberately wrong
     raw = base64.urlsafe_b64encode(json.dumps({'x': 1}).encode()).decode().rstrip('=')
     assert unpack_signed_payload('secret', f'{raw}.deadbeef') is None
@@ -40,7 +40,7 @@ def test_unpack_signed_payload_invalid_signature():
 
 def test_unpack_signed_payload_malformed_json_after_valid_signature():
     """Buggy producer signs garbage bytes — unpack returns None (no 500)."""
-    from app.core.signed_cookies import _sign, unpack_signed_payload
+    from copiloto_core.core.signed_cookies import _sign, unpack_signed_payload
     # raw = base64 of non-JSON bytes
     raw = base64.urlsafe_b64encode(b'not json @@@').decode().rstrip('=')
     sig = _sign('secret', raw)
@@ -48,7 +48,7 @@ def test_unpack_signed_payload_malformed_json_after_valid_signature():
 
 
 def test_unpack_signed_payload_happy():
-    from app.core.signed_cookies import pack_signed_payload, unpack_signed_payload
+    from copiloto_core.core.signed_cookies import pack_signed_payload, unpack_signed_payload
     packed = pack_signed_payload('secret', {'k': 'v', 'n': 42})
     out = unpack_signed_payload('secret', packed)
     assert out == {'k': 'v', 'n': 42}
@@ -58,7 +58,7 @@ def test_unpack_signed_payload_happy():
 
 
 def test_rate_limit_middleware_429():
-    from app.services.rate_limit import RateLimiter, build_rate_limit_middleware
+    from copiloto_core.services.rate_limit import RateLimiter, build_rate_limit_middleware
 
     limiter = RateLimiter(default_per_minute=1, webhook_per_minute=10)
     # Force `check` to return (False, 5.0) → 429 con Retry-After.
@@ -80,7 +80,7 @@ def test_rate_limit_middleware_429():
 
 
 def test_rate_limit_middleware_allowed_passes_through():
-    from app.services.rate_limit import RateLimiter, build_rate_limit_middleware
+    from copiloto_core.services.rate_limit import RateLimiter, build_rate_limit_middleware
 
     limiter = RateLimiter(default_per_minute=60, webhook_per_minute=600)
     limiter.check = AsyncMock(return_value=(True, 0))
@@ -102,7 +102,7 @@ def test_rate_limit_middleware_allowed_passes_through():
 
 def test_rate_limit_middleware_retry_after_min_1():
     """Si retry_after viene <1s, lo ajustamos a 1 para que el header tenga sentido."""
-    from app.services.rate_limit import RateLimiter, build_rate_limit_middleware
+    from copiloto_core.services.rate_limit import RateLimiter, build_rate_limit_middleware
 
     limiter = RateLimiter(default_per_minute=60, webhook_per_minute=600)
     limiter.check = AsyncMock(return_value=(False, 0.3))
@@ -126,8 +126,8 @@ def test_rate_limit_middleware_retry_after_min_1():
 def test_tenant_signup_locale_fallback(monkeypatch):
     """Si `profile_for(country_code)` levanta KeyError/AttributeError,
     cae al default `America/Bogota`."""
-    from app.api.v1.handlers import tenant_signup_handlers as tsh
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers import tenant_signup_handlers as tsh
+    from copiloto_core.api.v1.schemas import TenantCreate
     from uuid import uuid4
 
     # locale_service.profile_for levanta KeyError
@@ -181,7 +181,7 @@ def test_tenant_signup_locale_fallback(monkeypatch):
 
 
 def test_tenant_slug_pattern_export():
-    from app.api.v1.schemas import TENANT_SLUG_PATTERN
+    from copiloto_core.api.v1.schemas import TENANT_SLUG_PATTERN
     import re
     pat = re.compile(TENANT_SLUG_PATTERN)
     assert pat.match('acme')
@@ -195,7 +195,7 @@ def test_tenant_slug_pattern_export():
 
 
 def test_validate_iana_timezone_branches():
-    from app.api.v1.schemas import _validate_iana_timezone
+    from copiloto_core.api.v1.schemas import _validate_iana_timezone
     assert _validate_iana_timezone(None) is None
     assert _validate_iana_timezone('') == ''
     assert _validate_iana_timezone('America/Bogota') == 'America/Bogota'
@@ -210,7 +210,7 @@ def test_validate_iana_timezone_branches():
 
 
 def test_empty_service_token_next_normalized_to_none():
-    from app.core.config import Settings
+    from copiloto_core.core.config import Settings
     s = Settings(
         database_url='postgresql://x:x@localhost/x',
         jwt_secret='x' * 32,
@@ -222,7 +222,7 @@ def test_empty_service_token_next_normalized_to_none():
 
 
 def test_service_token_next_keeps_value():
-    from app.core.config import Settings
+    from copiloto_core.core.config import Settings
     s = Settings(
         database_url='postgresql://x:x@localhost/x',
         jwt_secret='x' * 32,

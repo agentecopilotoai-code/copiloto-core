@@ -1,7 +1,7 @@
 """Aggregator helper for static tests after the routes.py refactor.
 
 Historical context: `app/api/v1/routes.py` was a 15K-LOC monolith and ~96
-static tests asserted on its source via `Path('app/api/v1/routes.py').read_text()`.
+static tests asserted on its source via `Path('copiloto_core/api/v1/routes.py').read_text()`.
 The refactor extracts pure helpers to `app/api/v1/_helpers/` and handlers to
 `app/api/v1/handlers/`, so a single `read_text()` call no longer sees the
 whole API surface.
@@ -22,9 +22,9 @@ from functools import lru_cache
 from pathlib import Path
 
 
-_ROUTES_FILE = Path('app/api/v1/routes.py')
-_HELPERS_DIR = Path('app/api/v1/_helpers')
-_HANDLERS_DIR = Path('app/api/v1/handlers')
+_ROUTES_FILE = Path('copiloto_core/api/v1/routes.py')
+_HELPERS_DIR = Path('copiloto_core/api/v1/_helpers')
+_HANDLERS_DIR = Path('copiloto_core/api/v1/handlers')
 
 
 @lru_cache(maxsize=1)

@@ -96,38 +96,38 @@ def _fake_request(**state) -> SimpleNamespace:
 
 
 def test_user_display_name_from_request_uses_name():
-    from app.api.v1._helpers.me_utils import _user_display_name_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _user_display_name_from_request
     req = _fake_request(name='Alice')
     assert _user_display_name_from_request(req) == 'Alice'
 
 
 def test_user_display_name_from_request_falls_to_nickname():
-    from app.api.v1._helpers.me_utils import _user_display_name_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _user_display_name_from_request
     req = _fake_request(name=None, nickname='alice123')
     assert _user_display_name_from_request(req) == 'alice123'
 
 
 def test_user_display_name_from_request_falls_to_email_local():
-    from app.api.v1._helpers.me_utils import _user_display_name_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _user_display_name_from_request
     req = _fake_request(name=None, email='bob@x.co')
     # SimpleNamespace doesn't have `nickname` attr → getattr returns None.
     assert _user_display_name_from_request(req) == 'bob'
 
 
 def test_user_display_name_from_request_falls_to_actor_id():
-    from app.api.v1._helpers.me_utils import _user_display_name_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _user_display_name_from_request
     req = _fake_request(name=None, email=None, actor_id='sub-xyz')
     assert _user_display_name_from_request(req) == 'sub-xyz'
 
 
 def test_user_display_name_from_request_fallback_usuario():
-    from app.api.v1._helpers.me_utils import _user_display_name_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _user_display_name_from_request
     req = _fake_request(name=None, email=None, actor_id=None)
     assert _user_display_name_from_request(req) == 'usuario'
 
 
 def test_current_user_id_returns_cached():
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     cached_id = uuid4()
     req = _fake_request()
     req.state.user_id = cached_id
@@ -137,7 +137,7 @@ def test_current_user_id_returns_cached():
 
 
 def test_current_user_id_returns_none_when_not_user():
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     req = _fake_request(actor_type='service')
     conn = FakeConn()
     result = asyncio.run(current_user_id_from_request(req, conn))
@@ -145,7 +145,7 @@ def test_current_user_id_returns_none_when_not_user():
 
 
 def test_current_user_id_returns_none_when_no_actor_id():
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     req = _fake_request(actor_id=None)
     conn = FakeConn()
     result = asyncio.run(current_user_id_from_request(req, conn))
@@ -155,7 +155,7 @@ def test_current_user_id_returns_none_when_no_actor_id():
 def test_current_user_id_looks_up_existing():
     """P1-9: ahora 1 sola call a `app.resolve_or_create_user` que retorna
     `(user_id, branch)`. El test stubea la row de retorno."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request()
     conn = FakeConn(fetchrow=[{'user_id': uid, 'branch': 'existing'}])
@@ -166,7 +166,7 @@ def test_current_user_id_looks_up_existing():
 
 def test_current_user_id_creates_lazy_when_missing():
     """P1-9: la function consolida lookup + INSERT lazy en una call."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request()
     conn = FakeConn(fetchrow=[{'user_id': uid, 'branch': 'created'}])
@@ -178,7 +178,7 @@ def test_current_user_id_creates_lazy_falls_to_default_email():
     """Si JWT NO trae email y x-admin-user-email también vacío → fallback
     `{actor_id}@auth.local`. P1-9: verificamos que la call pasa ese email
     como param de la function."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request(email=None)
     conn = FakeConn(fetchrow=[{'user_id': uid, 'branch': 'created'}])
@@ -189,7 +189,7 @@ def test_current_user_id_creates_lazy_falls_to_default_email():
 
 
 def test_require_current_user_raises_401_when_none():
-    from app.api.v1._helpers.me_utils import _require_current_user
+    from copiloto_core.api.v1._helpers.me_utils import _require_current_user
     from fastapi import HTTPException
     req = _fake_request(actor_id=None)
     conn = FakeConn()
@@ -199,7 +199,7 @@ def test_require_current_user_raises_401_when_none():
 
 
 def test_require_current_user_returns_id():
-    from app.api.v1._helpers.me_utils import _require_current_user
+    from copiloto_core.api.v1._helpers.me_utils import _require_current_user
     uid = uuid4()
     req = _fake_request()
     conn = FakeConn(fetchrow=[{'id': uid}])
@@ -211,7 +211,7 @@ def test_load_user_preferences_lazy_creates():
     """PERF-NEW-3 (audit #3): ahora 1 RTT con `INSERT ON CONFLICT DO
     UPDATE RETURNING *`. Devuelve siempre el row tanto en INSERT como
     en CONFLICT — antes hacía 3 RTT (SELECT→INSERT→SELECT)."""
-    from app.api.v1._helpers.me_utils import _load_user_preferences_row
+    from copiloto_core.api.v1._helpers.me_utils import _load_user_preferences_row
     uid = uuid4()
     prefs_row = {'user_id': uid, 'locale': 'es-CO', 'timezone': 'America/Bogota'}
     # 1 sola fetchrow (el INSERT...ON CONFLICT...RETURNING).
@@ -228,7 +228,7 @@ def test_load_user_preferences_lazy_creates():
 def test_load_user_preferences_returns_existing():
     """Mismo path después de PERF-NEW-3 — el ON CONFLICT cubre el caso
     existente (RETURNING devuelve el row sin tocar nada)."""
-    from app.api.v1._helpers.me_utils import _load_user_preferences_row
+    from copiloto_core.api.v1._helpers.me_utils import _load_user_preferences_row
     uid = uuid4()
     prefs_row = {'user_id': uid, 'locale': 'es-CO'}
     conn = FakeConn(fetchrow=[prefs_row])
@@ -237,13 +237,13 @@ def test_load_user_preferences_returns_existing():
 
 
 def test_session_id_from_request_uses_jti():
-    from app.api.v1._helpers.me_utils import _session_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _session_id_from_request
     req = _fake_request(session_jti='jwt-jti-1')
     assert _session_id_from_request(req) == 'jwt-jti-1'
 
 
 def test_session_id_from_request_fallback_hash():
-    from app.api.v1._helpers.me_utils import _session_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _session_id_from_request
     req = _fake_request(session_jti=None, token_iat=1234567890)
     sid = _session_id_from_request(req)
     assert sid is not None
@@ -251,13 +251,13 @@ def test_session_id_from_request_fallback_hash():
 
 
 def test_session_id_from_request_returns_none_when_no_data():
-    from app.api.v1._helpers.me_utils import _session_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import _session_id_from_request
     req = _fake_request(session_jti=None, actor_id=None, token_iat=None)
     assert _session_id_from_request(req) is None
 
 
 def test_record_auth_session_inserts():
-    from app.api.v1._helpers.me_utils import record_auth_session
+    from copiloto_core.api.v1._helpers.me_utils import record_auth_session
     uid = uuid4()
     req = _fake_request(session_jti='sid-1')
     conn = FakeConn(execute=['OK'])
@@ -269,7 +269,7 @@ def test_record_auth_session_inserts():
 
 
 def test_record_auth_session_no_id_returns_none():
-    from app.api.v1._helpers.me_utils import record_auth_session
+    from copiloto_core.api.v1._helpers.me_utils import record_auth_session
     uid = uuid4()
     req = _fake_request(session_jti=None, actor_id=None, token_iat=None)
     conn = FakeConn()
@@ -279,7 +279,7 @@ def test_record_auth_session_no_id_returns_none():
 
 
 def test_record_auth_session_no_user_agent():
-    from app.api.v1._helpers.me_utils import record_auth_session
+    from copiloto_core.api.v1._helpers.me_utils import record_auth_session
     uid = uuid4()
     req = _fake_request(session_jti='sid-x')
     req.headers = {}  # sin user-agent
@@ -294,7 +294,7 @@ def test_record_auth_session_no_user_agent():
 
 
 def test_get_my_profile_happy_path():
-    from app.api.v1.handlers.me_handlers import get_my_profile
+    from copiloto_core.api.v1.handlers.me_handlers import get_my_profile
     uid = uuid4()
     conn = FakeConn(
         fetchrow=[
@@ -313,7 +313,7 @@ def test_get_my_profile_happy_path():
 
 
 def test_get_my_profile_404_when_user_row_missing():
-    from app.api.v1.handlers.me_handlers import get_my_profile
+    from copiloto_core.api.v1.handlers.me_handlers import get_my_profile
     from fastapi import HTTPException
     uid = uuid4()
     conn = FakeConn(fetchrow=[{'id': uid}, None])
@@ -324,7 +324,7 @@ def test_get_my_profile_404_when_user_row_missing():
 
 
 def test_patch_my_profile_400_empty():
-    from app.api.v1.handlers.me_handlers import patch_my_profile, ProfilePatchRequest
+    from copiloto_core.api.v1.handlers.me_handlers import patch_my_profile, ProfilePatchRequest
     from fastapi import HTTPException
     uid = uuid4()
     conn = FakeConn(fetchrow=[{'id': uid}])
@@ -336,7 +336,7 @@ def test_patch_my_profile_400_empty():
 
 
 def test_patch_my_profile_happy():
-    from app.api.v1.handlers.me_handlers import patch_my_profile, ProfilePatchRequest
+    from copiloto_core.api.v1.handlers.me_handlers import patch_my_profile, ProfilePatchRequest
     uid = uuid4()
     prefs = {'user_id': uid, 'display_name': 'X', 'phone': None,
              'locale': 'es-CO', 'timezone': 'America/Bogota',
@@ -360,7 +360,7 @@ def test_patch_my_profile_happy():
 
 
 def test_get_my_preferences():
-    from app.api.v1.handlers.me_handlers import get_my_preferences
+    from copiloto_core.api.v1.handlers.me_handlers import get_my_preferences
     uid = uuid4()
     prefs = {'user_id': uid, 'locale': 'es-MX', 'timezone': 'America/Mexico_City',
              'theme_override': 'dark', 'notification_matrix': '{}'}
@@ -372,7 +372,7 @@ def test_get_my_preferences():
 
 
 def test_patch_my_preferences_happy():
-    from app.api.v1.handlers.me_handlers import patch_my_preferences, PreferencesPatchRequest
+    from copiloto_core.api.v1.handlers.me_handlers import patch_my_preferences, PreferencesPatchRequest
     uid = uuid4()
     prefs = {'user_id': uid, 'locale': 'es-CO', 'timezone': 'America/Bogota',
              'theme_override': 'light', 'notification_matrix': '{}'}
@@ -387,7 +387,7 @@ def test_patch_my_preferences_happy():
 
 
 def test_patch_my_preferences_422_invalid_theme():
-    from app.api.v1.handlers.me_handlers import patch_my_preferences, PreferencesPatchRequest
+    from copiloto_core.api.v1.handlers.me_handlers import patch_my_preferences, PreferencesPatchRequest
     from fastapi import HTTPException
     uid = uuid4()
     conn = FakeConn(fetchrow=[{'id': uid}])
@@ -399,7 +399,7 @@ def test_patch_my_preferences_422_invalid_theme():
 
 
 def test_patch_my_preferences_400_empty():
-    from app.api.v1.handlers.me_handlers import patch_my_preferences, PreferencesPatchRequest
+    from copiloto_core.api.v1.handlers.me_handlers import patch_my_preferences, PreferencesPatchRequest
     from fastapi import HTTPException
     uid = uuid4()
     conn = FakeConn(fetchrow=[{'id': uid}])
@@ -411,7 +411,7 @@ def test_patch_my_preferences_400_empty():
 
 
 def test_get_my_notifications_str_matrix():
-    from app.api.v1.handlers.me_handlers import get_my_notifications
+    from copiloto_core.api.v1.handlers.me_handlers import get_my_notifications
     uid = uuid4()
     matrix = {'email': {'invites': True}}
     prefs = {'user_id': uid, 'notification_matrix': json.dumps(matrix),
@@ -423,7 +423,7 @@ def test_get_my_notifications_str_matrix():
 
 
 def test_get_my_notifications_dict_matrix():
-    from app.api.v1.handlers.me_handlers import get_my_notifications
+    from copiloto_core.api.v1.handlers.me_handlers import get_my_notifications
     uid = uuid4()
     matrix = {'sms': {'invites': False}}
     prefs = {'user_id': uid, 'notification_matrix': matrix,
@@ -435,7 +435,7 @@ def test_get_my_notifications_dict_matrix():
 
 
 def test_patch_my_notifications_happy():
-    from app.api.v1.handlers.me_handlers import patch_my_notifications, NotificationsPatchRequest
+    from copiloto_core.api.v1.handlers.me_handlers import patch_my_notifications, NotificationsPatchRequest
     uid = uuid4()
     # Q-2 (audit #3): shape `{categoria: {canal: bool}}` con canal restringido
     # a Literal['email','push','sms','in_app'].
@@ -453,7 +453,7 @@ def test_patch_my_notifications_happy():
 
 
 def test_get_my_sessions():
-    from app.api.v1.handlers.me_handlers import list_my_sessions
+    from copiloto_core.api.v1.handlers.me_handlers import list_my_sessions
     from datetime import datetime, UTC
     uid = uuid4()
     sid = 'sid-current'
@@ -474,7 +474,7 @@ def test_get_my_sessions():
 
 
 def test_delete_my_session_happy():
-    from app.api.v1.handlers.me_handlers import revoke_my_session
+    from copiloto_core.api.v1.handlers.me_handlers import revoke_my_session
     uid = uuid4()
     sid = 'sid-other'
     # UPDATE returns 'UPDATE 1' when row matched.
@@ -487,7 +487,7 @@ def test_delete_my_session_happy():
 
 
 def test_delete_my_session_404_not_owner():
-    from app.api.v1.handlers.me_handlers import revoke_my_session
+    from copiloto_core.api.v1.handlers.me_handlers import revoke_my_session
     from fastapi import HTTPException
     uid = uuid4()
     # UPDATE returned 0 rows — handler raises 404.
@@ -499,7 +499,7 @@ def test_delete_my_session_404_not_owner():
 
 
 def test_delete_my_session_404_unknown():
-    from app.api.v1.handlers.me_handlers import revoke_my_session
+    from copiloto_core.api.v1.handlers.me_handlers import revoke_my_session
     from fastapi import HTTPException
     uid = uuid4()
     conn = FakeConn(fetchrow=[{'id': uid}], execute=['UPDATE 0'])
@@ -513,7 +513,7 @@ def test_delete_my_session_404_unknown():
 
 
 def test_activate_support_mode_happy():
-    from app.api.v1.handlers.me_handlers import (
+    from copiloto_core.api.v1.handlers.me_handlers import (
         activate_support_mode, SupportModeActivateRequest,
     )
     from fastapi import Response
@@ -532,7 +532,7 @@ def test_activate_support_mode_happy():
 
 
 def test_activate_support_mode_403_for_admin_only():
-    from app.api.v1.handlers.me_handlers import (
+    from copiloto_core.api.v1.handlers.me_handlers import (
         activate_support_mode, SupportModeActivateRequest,
     )
     from fastapi import HTTPException, Response
@@ -549,7 +549,7 @@ def test_activate_support_mode_403_for_admin_only():
 
 
 def test_activate_support_mode_404_tenant_missing():
-    from app.api.v1.handlers.me_handlers import (
+    from copiloto_core.api.v1.handlers.me_handlers import (
         activate_support_mode, SupportModeActivateRequest,
     )
     from fastapi import HTTPException, Response
@@ -566,7 +566,7 @@ def test_activate_support_mode_404_tenant_missing():
 
 
 def test_activate_support_mode_401_no_actor():
-    from app.api.v1.handlers.me_handlers import (
+    from copiloto_core.api.v1.handlers.me_handlers import (
         activate_support_mode, SupportModeActivateRequest,
     )
     from fastapi import HTTPException, Response
@@ -585,7 +585,7 @@ def test_activate_support_mode_401_no_actor():
 def test_activate_support_mode_SEC002_rejects_unverified_mfa():
     """SEC-002 — un platform_owner con `mfa_verified=False` no debe poder
     activar support_mode (mismo gate que platform_admin endpoints)."""
-    from app.api.v1.handlers.me_handlers import (
+    from copiloto_core.api.v1.handlers.me_handlers import (
         SupportModeActivateRequest, _reset_support_mode_rate_limit,
         activate_support_mode,
     )
@@ -603,7 +603,7 @@ def test_activate_support_mode_SEC002_rejects_unverified_mfa():
 
 def test_activate_support_mode_SEC002_rate_limit_enforced():
     """SEC-002 — más de 5 activaciones en 5min por mismo actor → 429."""
-    from app.api.v1.handlers.me_handlers import (
+    from copiloto_core.api.v1.handlers.me_handlers import (
         SupportModeActivateRequest, _reset_support_mode_rate_limit,
         activate_support_mode,
     )
@@ -626,7 +626,7 @@ def test_activate_support_mode_SEC002_rate_limit_enforced():
 
 
 def test_deactivate_support_mode_idempotent():
-    from app.api.v1.handlers.me_handlers import deactivate_support_mode
+    from copiloto_core.api.v1.handlers.me_handlers import deactivate_support_mode
     from fastapi import Response
     tid = uuid4()
     conn = FakeConn(execute=['OK'])
@@ -641,7 +641,7 @@ def test_deactivate_support_mode_idempotent():
 
 
 def test_list_my_tenants_happy():
-    from app.api.v1.handlers.tenant_user_handlers import list_my_tenants
+    from copiloto_core.api.v1.handlers.tenant_user_handlers import list_my_tenants
     uid = uuid4()
     tid = uuid4()
     rows = [{
@@ -656,7 +656,7 @@ def test_list_my_tenants_happy():
 
 
 def test_list_my_tenants_401_anonymous():
-    from app.api.v1.handlers.tenant_user_handlers import list_my_tenants
+    from copiloto_core.api.v1.handlers.tenant_user_handlers import list_my_tenants
     from fastapi import HTTPException
     conn = FakeConn()
     req = _fake_request(actor_type='anonymous', actor_id=None)
@@ -670,7 +670,7 @@ def test_list_my_tenants_M68_uses_security_definer_function():
     DEFINER) en vez del SELECT directo. Sin esto, la RLS de `app.tenants`
     bloqueaba el JOIN para users invitados sin `tenant_id` claim en JWT
     → `/me/tenants` retornaba [] aunque la membresía existía."""
-    from app.api.v1.handlers.tenant_user_handlers import list_my_tenants
+    from copiloto_core.api.v1.handlers.tenant_user_handlers import list_my_tenants
     uid = uuid4()
     tid = uuid4()
     rows = [{
@@ -698,8 +698,8 @@ def test_list_my_tenants_M68_uses_security_definer_function():
 
 
 def test_tenant_signup_happy():
-    from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.tenant_signup_handlers import create_own_tenant
+    from copiloto_core.api.v1.schemas import TenantCreate
     uid = uuid4()
     tid = uuid4()
     tenant_row = {
@@ -724,8 +724,8 @@ def test_tenant_signup_happy():
 
 
 def test_tenant_signup_409_when_already_member():
-    from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.tenant_signup_handlers import create_own_tenant
+    from copiloto_core.api.v1.schemas import TenantCreate
     from fastapi import HTTPException
     existing_tid = uuid4()
     conn = FakeConn(fetchval=[existing_tid])
@@ -740,8 +740,8 @@ def test_tenant_signup_409_when_already_member():
 
 
 def test_tenant_signup_401_anonymous():
-    from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.tenant_signup_handlers import create_own_tenant
+    from copiloto_core.api.v1.schemas import TenantCreate
     from fastapi import HTTPException
     conn = FakeConn()
     req = _fake_request(actor_id=None)
@@ -758,10 +758,10 @@ def test_tenant_signup_SEC021_rate_limit_max_3_per_hour():
     """SEC-021 (audit #2) — max 3 signups por hora por actor → 4to 429.
     Anti-fleet-pollution: un attacker con email verified no puede crear
     N tenants para enmudecer la fleet."""
-    from app.api.v1.handlers.tenant_signup_handlers import (
+    from copiloto_core.api.v1.handlers.tenant_signup_handlers import (
         _reset_signup_rate_limiter, create_own_tenant,
     )
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.schemas import TenantCreate
     from fastapi import HTTPException
     _reset_signup_rate_limiter()
     payload = TenantCreate(
@@ -790,8 +790,8 @@ def test_tenant_signup_SEC007_rejects_unverified_email():
     """SEC-007 (audit 2026-05-27) — un attacker con cuenta Auth0 con email
     no verificado no debe poder crear un tenant + quedar como owner. Antes
     de este fix, polluía la fleet."""
-    from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.tenant_signup_handlers import create_own_tenant
+    from copiloto_core.api.v1.schemas import TenantCreate
     from fastapi import HTTPException
     conn = FakeConn()
     req = _fake_request(email='attacker@evil.co', email_verified=False)
@@ -807,8 +807,8 @@ def test_tenant_signup_SEC007_rejects_unverified_email():
 
 def test_tenant_signup_409_on_slug_conflict():
     import asyncpg
-    from app.api.v1.handlers.tenant_signup_handlers import create_own_tenant
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.tenant_signup_handlers import create_own_tenant
+    from copiloto_core.api.v1.schemas import TenantCreate
     from fastapi import HTTPException
 
     class ConflictingConn(FakeConn):
@@ -837,7 +837,7 @@ def test_tenant_signup_409_on_slug_conflict():
 
 
 def test_list_all_tenants_happy():
-    from app.api.v1.handlers.platform_admin_handlers import list_all_tenants
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_all_tenants
     tid = uuid4()
     rows = [
         {
@@ -862,7 +862,7 @@ def test_list_all_tenants_happy():
 
 
 def test_list_all_tenants_no_filters():
-    from app.api.v1.handlers.platform_admin_handlers import list_all_tenants
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_all_tenants
     conn = FakeConn(fetch=[[]], fetchval=[0])
     result = asyncio.run(
         list_all_tenants(
@@ -874,8 +874,8 @@ def test_list_all_tenants_no_filters():
 
 
 def test_create_tenant_for_third_party_happy():
-    from app.api.v1.handlers.platform_admin_handlers import create_tenant_for_third_party
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import create_tenant_for_third_party
+    from copiloto_core.api.v1.schemas import TenantCreate
     tid = uuid4()
     conn = FakeConn(
         fetchrow=[{
@@ -897,8 +897,8 @@ def test_create_tenant_for_third_party_happy():
 
 def test_create_tenant_for_third_party_409():
     import asyncpg
-    from app.api.v1.handlers.platform_admin_handlers import create_tenant_for_third_party
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import create_tenant_for_third_party
+    from copiloto_core.api.v1.schemas import TenantCreate
     from fastapi import HTTPException
 
     class ConflictConn(FakeConn):
@@ -917,7 +917,7 @@ def test_create_tenant_for_third_party_409():
 
 
 def test_get_tenant_happy():
-    from app.api.v1.handlers.platform_admin_handlers import get_tenant
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_tenant
     tid = uuid4()
     conn = FakeConn(fetchrow=[{
         'id': tid, 'slug': 'acme', 'legal_name': 'ACME', 'display_name': 'ACME',
@@ -930,7 +930,7 @@ def test_get_tenant_happy():
 
 
 def test_get_tenant_404():
-    from app.api.v1.handlers.platform_admin_handlers import get_tenant
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_tenant
     from fastapi import HTTPException
     tid = uuid4()
     conn = FakeConn(fetchrow=[None])
@@ -940,8 +940,8 @@ def test_get_tenant_404():
 
 
 def test_patch_tenant_happy():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant
-    from app.api.v1.schemas import TenantUpdate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant
+    from copiloto_core.api.v1.schemas import TenantUpdate
     tid = uuid4()
     conn = FakeConn(
         fetchrow=[{
@@ -960,8 +960,8 @@ def test_patch_tenant_happy():
 
 
 def test_patch_tenant_400_empty():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant
-    from app.api.v1.schemas import TenantUpdate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant
+    from copiloto_core.api.v1.schemas import TenantUpdate
     from fastapi import HTTPException
     tid = uuid4()
     conn = FakeConn()
@@ -972,7 +972,7 @@ def test_patch_tenant_400_empty():
 
 
 def test_list_runbooks():
-    from app.api.v1.handlers.platform_admin_handlers import list_runbooks
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_runbooks
     result = asyncio.run(list_runbooks())
     assert 'items' in result
     for item in result['items']:
@@ -980,14 +980,14 @@ def test_list_runbooks():
 
 
 def test_get_runbook_happy():
-    from app.api.v1.handlers.platform_admin_handlers import get_runbook
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_runbook
     result = asyncio.run(get_runbook('auth0-mfa-error'))
     assert result['slug'] == 'auth0-mfa-error'
     assert 'body_md' in result
 
 
 def test_get_runbook_404():
-    from app.api.v1.handlers.platform_admin_handlers import get_runbook
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_runbook
     from fastapi import HTTPException
     with pytest.raises(HTTPException) as exc:
         asyncio.run(get_runbook('does-not-exist'))
@@ -995,7 +995,7 @@ def test_get_runbook_404():
 
 
 def test_retry_outbound_dlq_placeholder():
-    from app.api.v1.handlers.platform_admin_handlers import retry_outbound_dlq
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import retry_outbound_dlq
     result = asyncio.run(retry_outbound_dlq())
     assert 'queued' in result
 
@@ -1006,7 +1006,7 @@ def test_retry_outbound_dlq_placeholder():
 
 
 def test_list_roles_happy():
-    from app.api.v1.handlers.platform_roles_handlers import list_roles
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import list_roles
     rows = [{'code': 'owner', 'name': 'Owner', 'description': None,
              'is_system': True, 'is_active': True, 'capability_count': 5}]
     conn = FakeConn(fetch=[rows])
@@ -1015,7 +1015,7 @@ def test_list_roles_happy():
 
 
 def test_create_role_happy():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         create_role, RoleCreateRequest,
     )
     # Handler hace `RoleRow(**dict(row), capability_count=0)` — el row no
@@ -1033,7 +1033,7 @@ def test_create_role_happy():
 
 def test_create_role_409():
     import asyncpg
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         create_role, RoleCreateRequest,
     )
     from fastapi import HTTPException
@@ -1050,14 +1050,14 @@ def test_create_role_409():
 
 
 def test_list_capabilities_happy():
-    from app.api.v1.handlers.platform_roles_handlers import list_capabilities
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import list_capabilities
     conn = FakeConn(fetch=[[]])
     result = asyncio.run(list_capabilities(conn))
     assert result.items == []
 
 
 def test_create_capability_happy():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         create_capability, CapabilityCreateRequest,
     )
     conn = FakeConn(
@@ -1072,14 +1072,14 @@ def test_create_capability_happy():
 
 
 def test_list_role_capabilities_happy():
-    from app.api.v1.handlers.platform_roles_handlers import list_role_capabilities
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import list_role_capabilities
     conn = FakeConn(fetch=[[]])
     result = asyncio.run(list_role_capabilities('admin', conn))
     assert result.items == []
 
 
 def test_patch_role_happy():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         patch_role, RolePatchRequest,
     )
     conn = FakeConn(
@@ -1097,7 +1097,7 @@ def test_patch_role_happy():
 
 
 def test_patch_role_400_empty():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         patch_role, RolePatchRequest,
     )
     from fastapi import HTTPException
@@ -1109,7 +1109,7 @@ def test_patch_role_400_empty():
 
 
 def test_patch_role_404():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         patch_role, RolePatchRequest,
     )
     from fastapi import HTTPException
@@ -1122,7 +1122,7 @@ def test_patch_role_404():
 
 
 def test_delete_role_happy():
-    from app.api.v1.handlers.platform_roles_handlers import delete_role
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import delete_role
     conn = FakeConn(
         fetchrow=[{'code': 'analyst', 'is_system': False}],
         execute=['DELETE 1', 'OK'],
@@ -1132,7 +1132,7 @@ def test_delete_role_happy():
 
 
 def test_delete_role_404():
-    from app.api.v1.handlers.platform_roles_handlers import delete_role
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import delete_role
     from fastapi import HTTPException
     conn = FakeConn(fetchrow=[None])
     req = _fake_request(roles=['platform_owner'])
@@ -1142,7 +1142,7 @@ def test_delete_role_404():
 
 
 def test_delete_role_409_system():
-    from app.api.v1.handlers.platform_roles_handlers import delete_role
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import delete_role
     from fastapi import HTTPException
     conn = FakeConn(fetchrow=[{'code': 'owner', 'is_system': True}])
     req = _fake_request(roles=['platform_owner'])
@@ -1152,7 +1152,7 @@ def test_delete_role_409_system():
 
 
 def test_assign_capability_happy():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         assign_capability_to_role, RoleCapabilityAssignRequest,
     )
     conn = FakeConn(
@@ -1168,7 +1168,7 @@ def test_assign_capability_happy():
 
 
 def test_assign_capability_404_role_missing():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         assign_capability_to_role, RoleCapabilityAssignRequest,
     )
     from fastapi import HTTPException
@@ -1183,7 +1183,7 @@ def test_assign_capability_404_role_missing():
 
 
 def test_assign_capability_404_cap_missing():
-    from app.api.v1.handlers.platform_roles_handlers import (
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import (
         assign_capability_to_role, RoleCapabilityAssignRequest,
     )
     from fastapi import HTTPException
@@ -1198,14 +1198,14 @@ def test_assign_capability_404_cap_missing():
 
 
 def test_revoke_capability_happy():
-    from app.api.v1.handlers.platform_roles_handlers import revoke_capability_from_role
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import revoke_capability_from_role
     conn = FakeConn(execute=['DELETE 1', 'OK'])
     req = _fake_request(roles=['platform_owner'])
     asyncio.run(revoke_capability_from_role('admin', 'foo.bar', req, conn))
 
 
 def test_revoke_capability_404():
-    from app.api.v1.handlers.platform_roles_handlers import revoke_capability_from_role
+    from copiloto_core.api.v1.handlers.platform_roles_handlers import revoke_capability_from_role
     from fastapi import HTTPException
     conn = FakeConn(execute=['DELETE 0'])
     req = _fake_request(roles=['platform_owner'])
@@ -1220,7 +1220,7 @@ def test_revoke_capability_404():
 
 
 def test_patch_tenant_status_happy():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_status, TenantStatusUpdate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant_status, TenantStatusUpdate
     tid = uuid4()
     conn = FakeConn(
         fetchrow=[{'id': tid, 'status': 'suspended'}],
@@ -1233,7 +1233,7 @@ def test_patch_tenant_status_happy():
 
 
 def test_patch_tenant_status_404():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_status, TenantStatusUpdate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant_status, TenantStatusUpdate
     from fastapi import HTTPException
     tid = uuid4()
     conn = FakeConn(fetchrow=[None])
@@ -1245,7 +1245,7 @@ def test_patch_tenant_status_404():
 
 
 def test_list_tenant_members_happy():
-    from app.api.v1.handlers.platform_admin_handlers import list_tenant_members
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_tenant_members
     from datetime import datetime, UTC
     tid = uuid4()
     uid = uuid4()
@@ -1273,7 +1273,7 @@ def _stub_invitation_send(monkeypatch, *,
     handler `add_tenant_member`. El servicio de invitaciones tiene
     sus propios tests en `test_unit_invitations.py`; acá solo
     verificamos que el handler lo invoque correctamente."""
-    from app.services import invitations as inv_mod
+    from copiloto_core.services import invitations as inv_mod
 
     inv_id = invitation_id or uuid4()
     expires_at = datetime.now(UTC)
@@ -1318,7 +1318,7 @@ def _stub_invitation_send(monkeypatch, *,
 
 
 def test_add_tenant_member_existing_user(monkeypatch):
-    from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
     _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
@@ -1344,7 +1344,7 @@ def test_add_tenant_member_existing_user(monkeypatch):
 
 def test_add_tenant_member_pending_user(monkeypatch):
     """Si el email no existe, se crea pending."""
-    from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
     _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
@@ -1367,7 +1367,7 @@ def test_add_tenant_member_pending_user(monkeypatch):
 
 
 def test_add_tenant_member_404_tenant_missing():
-    from app.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import add_tenant_member, TenantMemberAdd
     from fastapi import HTTPException
     tid = uuid4()
     conn = FakeConn(fetchval=[None])
@@ -1379,7 +1379,7 @@ def test_add_tenant_member_404_tenant_missing():
 
 
 def test_patch_tenant_member_change_role():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
     tid = uuid4()
     uid = uuid4()
     conn = FakeConn(
@@ -1393,7 +1393,7 @@ def test_patch_tenant_member_change_role():
 
 
 def test_patch_tenant_member_change_is_default_only():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
     tid = uuid4()
     uid = uuid4()
     conn = FakeConn(
@@ -1407,7 +1407,7 @@ def test_patch_tenant_member_change_is_default_only():
 
 
 def test_patch_tenant_member_404_no_membership():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
     from fastapi import HTTPException
     tid = uuid4()
     uid = uuid4()
@@ -1420,7 +1420,7 @@ def test_patch_tenant_member_404_no_membership():
 
 
 def test_patch_tenant_member_400_empty():
-    from app.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_tenant_member, TenantMemberPatch
     from fastapi import HTTPException
     tid = uuid4()
     uid = uuid4()
@@ -1433,7 +1433,7 @@ def test_patch_tenant_member_400_empty():
 
 
 def test_remove_tenant_member_happy():
-    from app.api.v1.handlers.platform_admin_handlers import remove_tenant_member
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import remove_tenant_member
     tid = uuid4()
     uid = uuid4()
     conn = FakeConn(execute=['DELETE 1', 'OK'])
@@ -1442,7 +1442,7 @@ def test_remove_tenant_member_happy():
 
 
 def test_remove_tenant_member_404():
-    from app.api.v1.handlers.platform_admin_handlers import remove_tenant_member
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import remove_tenant_member
     from fastapi import HTTPException
     tid = uuid4()
     uid = uuid4()
@@ -1461,7 +1461,7 @@ def test_get_platform_health_happy():
     generated_at, snapshot, alerts (array), services (array de
     {key, label, status, detail}), note. El bug original era
     `services` como dict → frontend `services.map()` rompía."""
-    from app.api.v1.handlers.platform_admin_handlers import get_platform_health
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_platform_health
     conn = FakeConn(fetchval=[1])
     result = asyncio.run(get_platform_health(conn))
     assert 'generated_at' in result
@@ -1479,7 +1479,7 @@ def test_get_platform_health_happy():
 
 def test_get_platform_health_db_down():
     """Si el DB probe falla, postgres.status='down' + detail con el error."""
-    from app.api.v1.handlers.platform_admin_handlers import get_platform_health
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_platform_health
 
     class FailingConn(FakeConn):
         async def fetchval(self, sql, *args):
@@ -1494,7 +1494,7 @@ def test_get_platform_health_db_down():
 def test_get_platform_health_db_timeout():
     """Si el probe tarda más de 2s, status='down' con TimeoutError."""
     import asyncio as _asyncio
-    from app.api.v1.handlers.platform_admin_handlers import get_platform_health
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_platform_health
 
     class SlowConn(FakeConn):
         async def fetchval(self, sql, *args):
@@ -1507,13 +1507,13 @@ def test_get_platform_health_db_timeout():
 
 
 def test_get_billing_mrr():
-    from app.api.v1.handlers.platform_admin_handlers import get_billing_mrr
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import get_billing_mrr
     result = asyncio.run(get_billing_mrr())
     assert result['mrr_total_usd'] == 0
 
 
 def test_list_platform_incidents_no_filter():
-    from app.api.v1.handlers.platform_admin_handlers import list_platform_incidents
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_platform_incidents
     conn = FakeConn(fetch=[[]])
     result = asyncio.run(
         list_platform_incidents(status_filter=None, limit=50, conn=conn)
@@ -1522,7 +1522,7 @@ def test_list_platform_incidents_no_filter():
 
 
 def test_list_platform_incidents_with_filter():
-    from app.api.v1.handlers.platform_admin_handlers import list_platform_incidents
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_platform_incidents
     from datetime import datetime, UTC
     now = datetime.now(UTC)
     rows = [{
@@ -1539,7 +1539,7 @@ def test_list_platform_incidents_with_filter():
 
 
 def test_list_outbound_dlq():
-    from app.api.v1.handlers.platform_admin_handlers import list_outbound_dlq
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_outbound_dlq
     result = asyncio.run(list_outbound_dlq())
     assert result['total'] == 0
 
@@ -1548,7 +1548,7 @@ def test_list_outbound_dlq():
 
 
 def test_list_feature_flags():
-    from app.api.v1.handlers.platform_admin_handlers import list_feature_flags
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import list_feature_flags
     from datetime import datetime, UTC
     now = datetime.now(UTC)
     rows = [{
@@ -1561,7 +1561,7 @@ def test_list_feature_flags():
 
 
 def test_create_feature_flag_happy():
-    from app.api.v1.handlers.platform_admin_handlers import create_feature_flag, FeatureFlagCreate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import create_feature_flag, FeatureFlagCreate
     from datetime import datetime, UTC
     now = datetime.now(UTC)
     conn = FakeConn(
@@ -1580,7 +1580,7 @@ def test_create_feature_flag_happy():
 
 def test_create_feature_flag_409():
     import asyncpg
-    from app.api.v1.handlers.platform_admin_handlers import create_feature_flag, FeatureFlagCreate
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import create_feature_flag, FeatureFlagCreate
     from fastapi import HTTPException
 
     class ConflictConn(FakeConn):
@@ -1596,7 +1596,7 @@ def test_create_feature_flag_409():
 
 
 def test_patch_feature_flag_happy():
-    from app.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
     from datetime import datetime, UTC
     now = datetime.now(UTC)
     conn = FakeConn(
@@ -1614,7 +1614,7 @@ def test_patch_feature_flag_happy():
 
 
 def test_patch_feature_flag_400_empty():
-    from app.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
     from fastapi import HTTPException
     conn = FakeConn()
     req = _fake_request(roles=['platform_owner'])
@@ -1624,7 +1624,7 @@ def test_patch_feature_flag_400_empty():
 
 
 def test_patch_feature_flag_404():
-    from app.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import patch_feature_flag, FeatureFlagPatch
     from fastapi import HTTPException
     conn = FakeConn(fetchrow=[None])
     req = _fake_request(roles=['platform_owner'])
@@ -1635,14 +1635,14 @@ def test_patch_feature_flag_404():
 
 
 def test_delete_feature_flag_happy():
-    from app.api.v1.handlers.platform_admin_handlers import delete_feature_flag
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import delete_feature_flag
     conn = FakeConn(execute=['DELETE 1', 'OK'])
     req = _fake_request(roles=['platform_owner'])
     asyncio.run(delete_feature_flag('beta', req, conn))
 
 
 def test_delete_feature_flag_404():
-    from app.api.v1.handlers.platform_admin_handlers import delete_feature_flag
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import delete_feature_flag
     from fastapi import HTTPException
     conn = FakeConn(execute=['DELETE 0'])
     req = _fake_request(roles=['platform_owner'])
@@ -1655,7 +1655,7 @@ def test_delete_feature_flag_404():
 
 
 def test_public_health_calls_db():
-    from app.api.v1.handlers.public_handlers import health
+    from copiloto_core.api.v1.handlers.public_handlers import health
     conn = FakeConn(fetchval=[1])
     result = asyncio.run(health(conn))
     assert result == {'status': 'ok'}
@@ -1666,7 +1666,7 @@ def test_public_health_calls_db():
 
 def test_tenant_create_invalid_slug():
     import pydantic
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.schemas import TenantCreate
     with pytest.raises(pydantic.ValidationError):
         TenantCreate(
             slug='Bad Slug!', legal_name='X', display_name='X',
@@ -1676,7 +1676,7 @@ def test_tenant_create_invalid_slug():
 
 def test_tenant_create_invalid_timezone():
     import pydantic
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.schemas import TenantCreate
     with pytest.raises(pydantic.ValidationError):
         TenantCreate(
             slug='acme', legal_name='X', display_name='X',
@@ -1686,7 +1686,7 @@ def test_tenant_create_invalid_timezone():
 
 
 def test_tenant_create_valid_timezone():
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.schemas import TenantCreate
     t = TenantCreate(
         slug='acme', legal_name='X', display_name='X',
         vertical_code='tech', country_code='CO',
@@ -1696,7 +1696,7 @@ def test_tenant_create_valid_timezone():
 
 
 def test_tenant_create_empty_timezone():
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.schemas import TenantCreate
     t = TenantCreate(
         slug='acme', legal_name='X', display_name='X',
         vertical_code='tech', country_code='CO',
@@ -1707,7 +1707,7 @@ def test_tenant_create_empty_timezone():
 
 def test_tenant_create_extra_field_rejected():
     import pydantic
-    from app.api.v1.schemas import TenantCreate
+    from copiloto_core.api.v1.schemas import TenantCreate
     with pytest.raises(pydantic.ValidationError):
         TenantCreate(
             slug='acme', legal_name='X', display_name='X',
@@ -1717,21 +1717,21 @@ def test_tenant_create_extra_field_rejected():
 
 
 def test_tenant_update_accepts_partial():
-    from app.api.v1.schemas import TenantUpdate
+    from copiloto_core.api.v1.schemas import TenantUpdate
     t = TenantUpdate(display_name='New name')
     assert t.display_name == 'New name'
     assert t.slug is None
 
 
 def test_platform_tenant_update_status():
-    from app.api.v1.schemas import PlatformTenantUpdate
+    from copiloto_core.api.v1.schemas import PlatformTenantUpdate
     t = PlatformTenantUpdate(status='suspended')
     assert t.status == 'suspended'
 
 
 def test_platform_tenant_update_invalid_status():
     import pydantic
-    from app.api.v1.schemas import PlatformTenantUpdate
+    from copiloto_core.api.v1.schemas import PlatformTenantUpdate
     with pytest.raises(pydantic.ValidationError):
         PlatformTenantUpdate(status='nuclear')
 
@@ -1741,7 +1741,7 @@ def test_platform_tenant_update_invalid_status():
 
 def test_require_tenant_management_platform_owner_bypasses():
     """platform_owner pasa sin lookup en DB y setea support_mode=True."""
-    from app.core.security import require_tenant_management
+    from copiloto_core.core.security import require_tenant_management
     tid = uuid4()
     req = _fake_request(roles=['platform_owner'])
     # No need to mock db.pool — platform_owner short-circuits before lookup
@@ -1750,7 +1750,7 @@ def test_require_tenant_management_platform_owner_bypasses():
 
 
 def test_require_tenant_management_401_no_actor():
-    from app.core.security import require_tenant_management
+    from copiloto_core.core.security import require_tenant_management
     from fastapi import HTTPException
     tid = uuid4()
     req = _fake_request(actor_id=None, roles=[])
@@ -1761,8 +1761,8 @@ def test_require_tenant_management_401_no_actor():
 
 def test_require_tenant_management_owner_of_this_tenant(monkeypatch):
     """Owner del tenant del path → pasa + setea state.tenant_id."""
-    from app.core.security import require_tenant_management
-    from app.db import pool as pool_mod
+    from copiloto_core.core.security import require_tenant_management
+    from copiloto_core.db import pool as pool_mod
     tid = uuid4()
 
     # Mock db.pool.acquire context manager
@@ -1785,8 +1785,8 @@ def test_require_tenant_management_owner_of_this_tenant(monkeypatch):
 
 def test_require_tenant_management_admin_of_this_tenant(monkeypatch):
     """Admin del tenant del path también pasa."""
-    from app.core.security import require_tenant_management
-    from app.db import pool as pool_mod
+    from copiloto_core.core.security import require_tenant_management
+    from copiloto_core.db import pool as pool_mod
     tid = uuid4()
 
     class FakeConnLookup:
@@ -1807,8 +1807,8 @@ def test_require_tenant_management_admin_of_this_tenant(monkeypatch):
 
 def test_require_tenant_management_403_wrong_role(monkeypatch):
     """Viewer/agent/manager del tenant → 403 (solo owner/admin)."""
-    from app.core.security import require_tenant_management
-    from app.db import pool as pool_mod
+    from copiloto_core.core.security import require_tenant_management
+    from copiloto_core.db import pool as pool_mod
     from fastapi import HTTPException
     tid = uuid4()
 
@@ -1832,8 +1832,8 @@ def test_require_tenant_management_403_wrong_role(monkeypatch):
 
 def test_require_tenant_management_403_not_member(monkeypatch):
     """User no es miembro del tenant → 403."""
-    from app.core.security import require_tenant_management
-    from app.db import pool as pool_mod
+    from copiloto_core.core.security import require_tenant_management
+    from copiloto_core.db import pool as pool_mod
     from fastapi import HTTPException
     tid = uuid4()
 
@@ -1857,8 +1857,8 @@ def test_require_tenant_management_403_not_member(monkeypatch):
 
 def test_require_tenant_management_503_no_pool(monkeypatch):
     """Si db.pool no está inicializada (boot race) → 503."""
-    from app.core.security import require_tenant_management
-    from app.db import pool as pool_mod
+    from copiloto_core.core.security import require_tenant_management
+    from copiloto_core.db import pool as pool_mod
     from fastapi import HTTPException
     tid = uuid4()
     monkeypatch.setattr(pool_mod.db, 'pool', None)
@@ -1875,7 +1875,7 @@ def test_current_user_id_reconciles_pending_invite():
     """M57 — branch `pending_reconciled` retornado por la SQL function.
     P1-9: el matching ahora vive en SQL; el test verifica que el caller
     Python acepta el branch y retorna el user_id."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid_pending = uuid4()
     req = _fake_request(actor_id='google-oauth2|123', email='nuevo@empresa.com')
     conn = FakeConn(
@@ -1887,7 +1887,7 @@ def test_current_user_id_reconciles_pending_invite():
 
 def test_current_user_id_creates_new_when_no_pending_match():
     """Branch `created`."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid_new = uuid4()
     req = _fake_request(actor_id='google-oauth2|456', email='nadie@empresa.com')
     conn = FakeConn(
@@ -1902,7 +1902,7 @@ def test_current_user_id_creates_new_when_no_pending_match():
 
 def test_current_user_id_M67_reconciles_email_with_different_subject():
     """M67 branch `email_reconciled` (P1-9: ahora vive SQL-side)."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid_existing = uuid4()
     req = _fake_request(
         actor_id='google-oauth2|xyz', email='foo@example.com',
@@ -1918,7 +1918,7 @@ def test_current_user_id_M67_rejects_unverified_email_reconcile():
     """A-004 — branch `email_blocked` → 403."""
     from fastapi import HTTPException
 
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     req = _fake_request(
         actor_id='auth0|attacker',
         email='victim@example.com',
@@ -1936,7 +1936,7 @@ def test_current_user_id_M67_rejects_unverified_email_reconcile():
 def test_current_user_id_M67_passes_email_verified_to_sql_function():
     """P1-9: la function recibe email_verified=True como 4th param
     cuando el JWT lo trae. Verifica que el caller lo extrae bien."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid = uuid4()
     req = _fake_request(email='foo@example.com', email_verified=True)
     conn = FakeConn(
@@ -1952,7 +1952,7 @@ def test_current_user_id_existing_user_skips_pending_lookup():
     """P1-9: la function consolidada hace siempre 1 sola call (el branching
     happens SQL-side). Verificamos que el caller hace EXACTAMENTE 1
     fetchrow y que la query es a la function."""
-    from app.api.v1._helpers.me_utils import current_user_id_from_request
+    from copiloto_core.api.v1._helpers.me_utils import current_user_id_from_request
     uid_existing = uuid4()
     req = _fake_request(actor_id='google-oauth2|789')
     conn = FakeConn(fetchrow=[{'user_id': uid_existing, 'branch': 'existing'}])
@@ -1968,10 +1968,10 @@ def test_current_user_id_existing_user_skips_pending_lookup():
 
 def test_add_tenant_member_auth0_invited(monkeypatch):
     """Auth0 configured + user nuevo → invita + crea user con auth_subject real."""
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         add_tenant_member, TenantMemberAdd,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
@@ -2013,10 +2013,10 @@ def test_add_tenant_member_auth0_invited(monkeypatch):
 def test_add_tenant_member_auth0_reused_existing(monkeypatch):
     """Email ya estaba en Auth0 → reusa el user. status='reused_existing'.
     M61: AÚN ASÍ se manda email — fixea el bug que reportó el operator."""
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         add_tenant_member, TenantMemberAdd,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
@@ -2051,10 +2051,10 @@ def test_add_tenant_member_auth0_reused_existing(monkeypatch):
 
 def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
     """Sin Auth0 configurado → modo LOCAL ONLY, status='skipped', pending|hash."""
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         add_tenant_member, TenantMemberAdd,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
@@ -2084,10 +2084,10 @@ def test_add_tenant_member_auth0_skipped_when_not_configured(monkeypatch):
 
 def test_add_tenant_member_auth0_error_falls_back_to_local(monkeypatch):
     """Auth0 API error → flow sigue en modo LOCAL (no aborta), status='error'."""
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         add_tenant_member, TenantMemberAdd,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     _stub_invitation_send(monkeypatch)
     tid = uuid4()
     uid = uuid4()
@@ -2120,10 +2120,10 @@ def test_add_tenant_member_invitation_rate_limit_does_not_abort(monkeypatch):
     """M61: si el rate-limit del servicio de invitaciones bloquea, la
     membresía AÚN se crea — el operator ve `invitation.status='rate_limited'`
     y puede reintentar."""
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         add_tenant_member, TenantMemberAdd,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: False)
     _stub_invitation_send(monkeypatch, raise_rate_limit=True)
 
@@ -2156,21 +2156,21 @@ def test_add_tenant_member_invitation_rate_limit_does_not_abort(monkeypatch):
 
 # M60/M-004 — helper payloads para los tests post-hardening.
 def _auth0_action_payload(justification='Motivo legítimo de operación.'):
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         Auth0AdminActionPayload,
     )
     return Auth0AdminActionPayload(justification=justification)
 
 
 def _auth0_delete_payload(confirm=True, justification='GDPR request del titular.'):
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         Auth0AdminDeletePayload,
     )
     return Auth0AdminDeletePayload(confirm=confirm, justification=justification)
 
 
 def _reset_auth0_rate_limit():
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         _auth0_rl_reset_all,
     )
     _auth0_rl_reset_all()
@@ -2179,10 +2179,10 @@ def _reset_auth0_rate_limit():
 def test_auth0_admin_404_when_user_not_found(monkeypatch):
     """Si no existe el `app.users.id`, todos los endpoints devuelven 404."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
     monkeypatch.setattr(auth0_admin, 'block_user',
                         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError('should not call')))
@@ -2199,10 +2199,10 @@ def test_auth0_admin_404_when_user_not_found(monkeypatch):
 def test_auth0_admin_409_when_user_pending(monkeypatch):
     """Si `auth_subject = 'pending|...'` (invitee sin login real), 409."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         reset_mfa_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
     conn = FakeConn(fetchrow=[
         {'auth_subject': 'pending|abc123', 'email': 'pend@x.co'},
@@ -2219,10 +2219,10 @@ def test_auth0_admin_409_when_user_pending(monkeypatch):
 def test_auth0_admin_501_when_not_configured(monkeypatch):
     """Si Auth0 Management API no está configurado → 501."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         unblock_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: False)
     conn = FakeConn()
     req = _fake_request(roles=['platform_owner'])
@@ -2237,10 +2237,10 @@ def test_auth0_admin_501_when_not_configured(monkeypatch):
 def test_auth0_admin_block_ok(monkeypatch):
     """Happy path: block resuelve auth_subject + llama auth0_admin.block_user + audita."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
     called = {}
 
@@ -2273,8 +2273,8 @@ def test_auth0_admin_block_SEC006_rejects_self_target(monkeypatch):
     su propio Auth0 user (locked-out permanente si es el único platform_
     owner)."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import block_user_in_auth0
-    from app.services import auth0_admin
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import block_user_in_auth0
+    from copiloto_core.services import auth0_admin
     from fastapi import HTTPException
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
@@ -2296,10 +2296,10 @@ def test_auth0_admin_block_SEC006_rejects_self_target(monkeypatch):
 def test_auth0_admin_delete_SEC006_rejects_self_target(monkeypatch):
     """SEC-006 — mismo guard aplica para delete (peor: irreversible)."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         Auth0AdminDeletePayload, delete_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     from fastapi import HTTPException
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
@@ -2318,10 +2318,10 @@ def test_auth0_admin_delete_SEC006_rejects_self_target(monkeypatch):
 
 def test_auth0_admin_unblock_ok(monkeypatch):
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         unblock_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
     called = {}
 
@@ -2342,10 +2342,10 @@ def test_auth0_admin_unblock_ok(monkeypatch):
 
 def test_auth0_admin_reset_mfa_ok(monkeypatch):
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         reset_mfa_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
     called = {}
 
@@ -2368,10 +2368,10 @@ def test_auth0_admin_reset_mfa_ok(monkeypatch):
 def test_auth0_admin_delete_ok_marks_user_pending(monkeypatch):
     """DELETE en Auth0 + marca local user como pending|<hex> + audita."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         delete_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
     async def fake_delete(user_id):
@@ -2396,10 +2396,10 @@ def test_auth0_admin_delete_ok_marks_user_pending(monkeypatch):
 def test_auth0_admin_block_502_on_auth0_error(monkeypatch):
     """Si auth0_admin levanta Auth0ApiError → 502."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
     async def boom(_user_id):
@@ -2420,10 +2420,10 @@ def test_auth0_admin_block_502_on_auth0_error(monkeypatch):
 
 def test_auth0_admin_delete_502_on_auth0_error(monkeypatch):
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         delete_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
     async def boom(_user_id):
@@ -2450,7 +2450,7 @@ def test_auth0_admin_delete_502_on_auth0_error(monkeypatch):
 def test_auth0_admin_payload_justification_too_short_rejected():
     """M-004: justification < 10 chars → pydantic ValidationError."""
     import pydantic  # noqa: PLC0415
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         Auth0AdminActionPayload,
     )
     with pytest.raises(pydantic.ValidationError):
@@ -2460,10 +2460,10 @@ def test_auth0_admin_payload_justification_too_short_rejected():
 def test_auth0_admin_delete_requires_confirm_true(monkeypatch):
     """M-004: DELETE con confirm=False explícito → 400."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         delete_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
     monkeypatch.setattr(auth0_admin, 'delete_user',
                         lambda *_a, **_k: (_ for _ in ()).throw(AssertionError('should not call')))
@@ -2483,10 +2483,10 @@ def test_auth0_admin_delete_requires_confirm_true(monkeypatch):
 def test_auth0_admin_mutate_rate_limit_enforced(monkeypatch):
     """M-004: 11º block del MISMO actor en <5min → 429."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
     async def fake_block(user_id): pass
@@ -2520,10 +2520,10 @@ def test_auth0_admin_mutate_rate_limit_enforced(monkeypatch):
 def test_auth0_admin_destroy_rate_limit_stricter(monkeypatch):
     """M-004: delete tiene rate-limit propio más estricto: max 3/30min."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         delete_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
     async def fake_delete(user_id): pass
@@ -2556,10 +2556,10 @@ def test_auth0_admin_destroy_rate_limit_stricter(monkeypatch):
 def test_auth0_admin_rate_limit_per_actor_isolated(monkeypatch):
     """M-004: el bucket es POR ACTOR — un actor saturado no afecta a otro."""
     _reset_auth0_rate_limit()
-    from app.api.v1.handlers.platform_admin_handlers import (
+    from copiloto_core.api.v1.handlers.platform_admin_handlers import (
         block_user_in_auth0,
     )
-    from app.services import auth0_admin
+    from copiloto_core.services import auth0_admin
     monkeypatch.setattr(auth0_admin, 'is_configured', lambda: True)
 
     async def fake_block(_uid): pass

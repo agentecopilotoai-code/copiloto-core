@@ -1,7 +1,7 @@
-"""Cobertura completa de `app.services.secret_resolver`."""
+"""Cobertura completa de `copiloto_core.services.secret_resolver`."""
 from __future__ import annotations
 
-from app.services.secret_resolver import (
+from copiloto_core.services.secret_resolver import (
     resolve_secret_ref,
     secret_ref_is_configured,
 )

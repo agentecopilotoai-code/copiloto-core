@@ -1,4 +1,4 @@
-"""Tests para `app.admin.oauth_state_store` (P1-10 audit 2026-05-27).
+"""Tests para `copiloto_core.admin.oauth_state_store` (P1-10 audit 2026-05-27).
 
 Verifica single-use enforcement del OAuth state token. RedisOAuthStateStore
 no se testea acá (requiere broker live); tests cubren InMemory + factory +
@@ -15,21 +15,21 @@ import pytest
 
 
 def test_inmemory_mark_consumed_first_returns_true():
-    from app.admin.oauth_state_store import InMemoryOAuthStateStore
+    from copiloto_core.admin.oauth_state_store import InMemoryOAuthStateStore
     store = InMemoryOAuthStateStore()
     assert asyncio.run(store.mark_consumed('state-1', 600)) is True
 
 
 def test_inmemory_mark_consumed_replay_returns_false():
     """Replay attempt: el mismo state intentado 2× retorna False segunda vez."""
-    from app.admin.oauth_state_store import InMemoryOAuthStateStore
+    from copiloto_core.admin.oauth_state_store import InMemoryOAuthStateStore
     store = InMemoryOAuthStateStore()
     assert asyncio.run(store.mark_consumed('state-1', 600)) is True
     assert asyncio.run(store.mark_consumed('state-1', 600)) is False  # replay
 
 
 def test_inmemory_distinct_states_independent():
-    from app.admin.oauth_state_store import InMemoryOAuthStateStore
+    from copiloto_core.admin.oauth_state_store import InMemoryOAuthStateStore
     store = InMemoryOAuthStateStore()
     assert asyncio.run(store.mark_consumed('state-a', 600)) is True
     assert asyncio.run(store.mark_consumed('state-b', 600)) is True
@@ -43,7 +43,7 @@ def test_inmemory_expired_state_can_be_re_consumed():
 
     NO debería pasar en práctica (los states son cripto-random 32 bytes),
     pero el cleanup TTL existe para evitar memory growth ilimitado."""
-    from app.admin.oauth_state_store import InMemoryOAuthStateStore
+    from copiloto_core.admin.oauth_state_store import InMemoryOAuthStateStore
     store = InMemoryOAuthStateStore()
     asyncio.run(store.mark_consumed('state-1', 1))  # TTL 1s
     time.sleep(1.1)
@@ -52,7 +52,7 @@ def test_inmemory_expired_state_can_be_re_consumed():
 
 
 def test_inmemory_close_clears_state():
-    from app.admin.oauth_state_store import InMemoryOAuthStateStore
+    from copiloto_core.admin.oauth_state_store import InMemoryOAuthStateStore
     store = InMemoryOAuthStateStore()
     asyncio.run(store.mark_consumed('a', 600))
     asyncio.run(store.mark_consumed('b', 600))
@@ -67,7 +67,7 @@ def test_inmemory_close_clears_state():
 def test_factory_returns_inmemory_when_no_redis(monkeypatch):
     from types import SimpleNamespace
 
-    from app.admin import config, oauth_state_store
+    from copiloto_core.admin import config, oauth_state_store
     oauth_state_store.set_oauth_state_store_for_tests(None)
     monkeypatch.setattr(
         config, 'get_admin_settings',
@@ -78,7 +78,7 @@ def test_factory_returns_inmemory_when_no_redis(monkeypatch):
 
 
 def test_factory_caches_singleton():
-    from app.admin import oauth_state_store
+    from copiloto_core.admin import oauth_state_store
     oauth_state_store.set_oauth_state_store_for_tests(None)
     s1 = oauth_state_store.get_oauth_state_store()
     s2 = oauth_state_store.get_oauth_state_store()
@@ -88,7 +88,7 @@ def test_factory_caches_singleton():
 def test_redis_raises_if_dep_missing():
     import sys
 
-    from app.admin import oauth_state_store
+    from copiloto_core.admin import oauth_state_store
     if 'redis' in sys.modules:
         pytest.skip('redis dep instalada — skip negative test')
     with pytest.raises(RuntimeError, match='redis-py'):

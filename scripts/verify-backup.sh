@@ -461,9 +461,9 @@ MESSAGES_COUNT=0
 if [[ "$RESTORE_MODE" == ephemeral_isolated* ]]; then
   echo "==> Sanity checks"
   SANITY_SQL="
-  select 'tenants', count(*) from app.tenants
-  union all select 'conversations', count(*) from app.conversations
-  union all select 'messages', count(*) from app.messages
+  select 'tenants', count(*) from copiloto_core.tenants
+  union all select 'conversations', count(*) from copiloto_core.conversations
+  union all select 'messages', count(*) from copiloto_core.messages
   "
   SANITY_OUT="$(psql "$VERIFY_URL" -Atc "$SANITY_SQL" 2>"$WORK_DIR/sanity.err" || true)"
   if [[ -z "$SANITY_OUT" ]]; then
