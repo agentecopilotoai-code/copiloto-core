@@ -833,11 +833,13 @@ async def invitation_landing(token: str, request: Request) -> Response:
 @router.get('/admin/login', include_in_schema=False)
 async def admin_login(request: Request) -> RedirectResponse:
     _debug('GET /admin/login', has_cookie=request.cookies.get(SESSION_COOKIE) is not None)
-    if await _active_session(request):
-        _debug('GET /admin/login', skip='already_authenticated', redirect='/admin/')
-        return RedirectResponse('/admin/', status_code=status.HTTP_303_SEE_OTHER)
-
     settings = get_admin_settings()
+    if await _active_session(request):
+        # v1.5.4: redirect configurable (default /dashboard para consumer flow)
+        target = getattr(settings, 'post_login_redirect_url', '/dashboard')
+        _debug('GET /admin/login', skip='already_authenticated', redirect=target)
+        return RedirectResponse(target, status_code=status.HTTP_303_SEE_OTHER)
+
     if not settings.auth0_admin_client_id or not settings.auth0_audience:
         _debug(
             'GET /admin/login', error='auth0_not_configured',
@@ -1237,7 +1239,13 @@ async def admin_callback(
         # entra al panel igual (ya tiene membership desde
         # `add_tenant_member`); el redeem es solo audit + UX.
 
-    response = RedirectResponse('/admin/')
+    # v1.5.4: target configurable via settings.post_login_redirect_url
+    # (default '/dashboard' para consumer flow, configurable a '/admin/'
+    # para core repo via env var POST_LOGIN_REDIRECT_URL).
+    # getattr con default cubre el caso de stubs de tests que no setean
+    # el attr nuevo.
+    post_login_target = getattr(settings, 'post_login_redirect_url', '/dashboard')
+    response = RedirectResponse(post_login_target)
     response.delete_cookie(STATE_COOKIE)
     if pending_token:
         response.delete_cookie(PENDING_INVITATION_COOKIE, path='/')
@@ -1257,7 +1265,7 @@ async def admin_callback(
         'GET /callback', step='session_cookie_set',
         sid=session_id, ttl_seconds=session_ttl,
         secure=settings.cookies_secure, samesite='strict',
-        redirect='/admin/',
+        redirect=post_login_target,
         pending_invitation_redeem=redeem_status,
     )
     return response
@@ -1318,7 +1326,10 @@ async def admin_logout(request: Request) -> RedirectResponse:
             oidc_params['id_token_hint'] = id_token_hint
         logout_url = f'{_auth0_base_url()}/oidc/logout?{urlencode(oidc_params)}'
     else:
-        logout_url = '/admin/'
+        # v1.5.4: sin Auth0 OIDC logout, redirect a la URL configurada
+        # (default '/' = landing del consumer). getattr con default
+        # para compat con stubs de tests.
+        logout_url = getattr(settings, 'post_logout_redirect_url', '/')
     _debug(
         'POST /admin/logout', step='redirect_decided',
         redirect_to=logout_url[:100] + ('…' if len(logout_url) > 100 else ''),

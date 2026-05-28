@@ -32,6 +32,15 @@ class AdminSettings(BaseSettings):
     auth0_web_origins: str = 'http://localhost:3000'
     auth0_claims_namespace: str = 'https://copilotoia.com/claims/'
     admin_core_api_base_url: str = 'http://127.0.0.1:8000'
+
+    # v1.5.4: a dónde redirigir el browser después del login OAuth exitoso
+    # y después del logout. Defaults pensados para consumer flow
+    # (admin_panel=False): `/dashboard` viene del scaffolder, `/` es la
+    # landing. El repo del core override-ea a `/admin/` poniendo
+    # POST_LOGIN_REDIRECT_URL=/admin/ en su .env porque su admin SPA
+    # sigue siendo la home post-login.
+    post_login_redirect_url: str = '/dashboard'
+    post_logout_redirect_url: str = '/'
     mfa_enforcement_enabled: bool = True
     # P0-3 (audit 2026-05-27) — Redis URL para session store cross-worker.
     # Si None, el BFF usa InMemorySessionStore (single-worker only). En
