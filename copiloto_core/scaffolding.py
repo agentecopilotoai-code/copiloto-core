@@ -231,6 +231,7 @@ LOG_LEVEL=INFO
 # Las credentials del Management API (MGMT_CLIENT_ID/SECRET) NUNCA
 # deben vivir en disco — solo en el shell durante el comando:
 #   export MGMT_CLIENT_ID='...' MGMT_CLIENT_SECRET='...'
+#   export TENANT_FRIENDLY_NAME='Mi SaaS'   # ← nombre visible en login
 #   python -m copiloto_core auth0-configure
 #   unset MGMT_CLIENT_ID MGMT_CLIENT_SECRET
 #
@@ -245,8 +246,30 @@ JWT_SECRET=CHANGE_ME
 # background jobs). Generate-secrets le pone un random de 36 bytes.
 SERVICE_TOKEN=CHANGE_ME
 
+# ─── MFA enforcement (default ON) ─────────────────────────────────────
+# El core ENFORCE MFA por default para users con roles privilegiados
+# (platform_owner, owner, admin). Si recién arrancás y todavía no
+# activaste la MFA Policy en Auth0 dashboard, el SPA del admin entra
+# en loop infinito de logout. Dos opciones:
+#   1. Activar MFA Policy en Auth0 (recomendado, ver docs/AUTH0.md).
+#   2. Skip explícito SOLO en dev local descomentando esta línea:
+# MFA_ENFORCEMENT_ENABLED=false
+
+# ─── Resend (emails transaccionales: invitations, password reset) ─────
+# Sin esto, el core usa NoopProvider — emails NO se envían, solo se
+# loguean (warning visible). Para enviarlos de verdad:
+#   1. Cuenta gratis en https://resend.com (3000 emails/mes free).
+#   2. Crear API key (https://resend.com/api-keys) — empieza con re_...
+#   3. Verificar dominio sender (https://resend.com/domains) o usar
+#      'onboarding@resend.dev' para tests.
+#   4. Descomentar y rellenar:
+# RESEND_API_KEY=re_xxxxxxxxxxxxx
+# EMAIL_FROM_ADDRESS=invites@tu-dominio.com
+# EMAIL_FROM_NAME={project_name}
+
 # ─── AI providers master key (Fernet, OPCIONAL) ───────────────────────
-# Si vas a cifrar API keys de proveedores IA, generala con:
+# Si vas a cifrar API keys de proveedores IA en `app.platform_secrets`,
+# generala con:
 #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 # y descomentá la línea. Settings la trata como opt-in (None por default).
 # AI_PROVIDER_MASTER_KEY=
@@ -263,6 +286,14 @@ S3_BUCKET={project_package}
 # ─── Rate limiting (req/min por IP+ruta) ──────────────────────────────
 RATE_LIMIT_PER_MIN=60
 RATE_LIMIT_WEBHOOK_PER_MIN=300
+
+# ─── Post-login / Post-logout redirects (opcionales, OVERRIDE smart) ─
+# Por default v1.6.2+: smart routing en el callback OAuth.
+#   - Si el user es platform_owner → /admin/ (panel del core)
+#   - Sino → /dashboard (UI del consumer)
+# Override estos defaults SOLO si querés un target fijo para TODOS:
+# POST_LOGIN_REDIRECT_URL=/dashboard    # forzar dashboard también para platform_owner
+# POST_LOGOUT_REDIRECT_URL=/             # default ya es /
 
 # ─── Observabilidad ───────────────────────────────────────────────────
 # IPs autorizadas a leer `/metrics` (Prometheus). Default: nadie.
