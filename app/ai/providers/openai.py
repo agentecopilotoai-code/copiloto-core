@@ -32,6 +32,7 @@ from app.ai.providers.base import (
     TTSProvider,
     TextResult,
     TranscriptResult,
+    assert_response_within_size_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -315,6 +316,11 @@ class OpenAIProvider(LLMProvider, ImageProvider, TTSProvider, STTProvider):
 
 
 def _check_status(resp: httpx.Response, path: str) -> None:
+    # SEC-022 (audit#4) — bytes cap.
+    assert_response_within_size_limit(
+        resp.headers.get('content-length'),
+        provider='openai', path=path,
+    )
     if resp.status_code == 429:
         retry_after_raw = resp.headers.get('retry-after')
         # Reusamos el parser del módulo grok para mantener semántica única

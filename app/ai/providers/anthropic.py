@@ -24,6 +24,7 @@ from app.ai.providers.base import (
     ProviderTimeoutError,
     ProviderUnavailable,
     TextResult,
+    assert_response_within_size_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,6 +137,11 @@ class AnthropicProvider(LLMProvider):
                 raise ProviderUnavailable(f'anthropic /messages: {exc}') from exc
         elapsed_ms = (time.monotonic() - t0) * 1000.0
 
+        # SEC-022 (audit#4) — bytes cap.
+        assert_response_within_size_limit(
+            resp.headers.get('content-length'),
+            provider='anthropic', path='/messages',
+        )
         if resp.status_code == 429:
             retry_after_raw = resp.headers.get('retry-after')
             from app.ai.providers.grok import _parse_retry_after  # noqa: PLC0415

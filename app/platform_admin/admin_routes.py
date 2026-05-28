@@ -116,54 +116,26 @@ class PlatformAIProviderUpdate(BaseModel):
 
 
 def _reject_unsafe_provider_url(url: str, *, field: str) -> None:
-    """SEC-019 (audit #2) — rechaza URLs SSRF-able para provider params.
+    """SEC-019 (audit #2) — wrapper sobre `app.services.url_safety` que
+    convierte `UrlSafetyError` → HTTPException 422 para el write-path.
 
-    Rechaza:
-      - Schema no-https (http/ftp/file/gopher/etc).
-      - IP literals: RFC1918 (10/8, 172.16/12, 192.168/16), loopback
-        (127/8, ::1), link-local (169.254/16 incluye AWS metadata),
-        multicast, unspecified.
-      - Hostnames: `localhost`, `*.local`, `*.internal`.
-
-    El platform_owner debería apuntar a la API pública del provider
-    (api.x.ai, api.openai.com, etc.) sobre HTTPS.
+    Por defecto valida en modo estricto (cloud): https + no-private.
+    Si se necesita permitir locales en el futuro, agregar param
+    `strict=False`.
     """
-    import ipaddress  # noqa: PLC0415
-    from urllib.parse import urlparse  # noqa: PLC0415
     from fastapi import HTTPException, status  # noqa: PLC0415
 
-    parsed = urlparse(url)
-    if parsed.scheme not in ('https',):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f'{field}: scheme must be https (got {parsed.scheme!r})',
-        )
-    host = (parsed.hostname or '').lower()
-    if not host:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f'{field}: hostname missing',
-        )
-    if host in ('localhost',) or host.endswith(('.local', '.internal')):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f'{field}: hostname {host!r} not allowed',
-        )
-    # Si es IP literal, validar el rango.
+    from app.services.url_safety import UrlSafetyError, check_provider_url  # noqa: PLC0415
+
     try:
-        ip = ipaddress.ip_address(host)
-    except ValueError:
-        return  # hostname normal — DNS lookup vendrá después; la API
-                # pública del provider va a resolver a una IP pública.
-    if (ip.is_private or ip.is_loopback or ip.is_link_local
-            or ip.is_multicast or ip.is_unspecified or ip.is_reserved):
+        # `provider='cloud'` fuerza modo strict (no está en CLOUD_PROVIDERS
+        # set pero el `strict=True` explícito gana).
+        check_provider_url(url, provider='cloud', field=field, strict=True)
+    except UrlSafetyError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f'{field}: IP {host!r} not allowed (private/loopback/'
-                f'link-local/multicast/reserved)'
-            ),
-        )
+            detail=str(exc),
+        ) from exc
 
 
 def _hint_of(secret_value: str) -> str:

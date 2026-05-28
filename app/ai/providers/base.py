@@ -39,6 +39,53 @@ if TYPE_CHECKING:
 # ─── PersistentHttpxClient (PERF-021 audit#4) ─────────────────────────────
 
 
+# Hard cap defensivo del tamaño de response (SEC-022 audit#4). Cualquier
+# provider IA hostil/buggy podría devolver multi-GB; sin esto un asyncio
+# task se quedaría leyendo y haría OOM al worker. 256 MiB es ~6x el
+# tamaño del video más grande razonable (5 min @ 1080p ~50MB), suficiente
+# para todos los modalities legítimos.
+PROVIDER_RESPONSE_MAX_BYTES: int = 256 * 1024 * 1024
+
+
+def assert_response_within_size_limit(
+    content_length: str | int | None,
+    *,
+    provider: str,
+    path: str,
+    cap_bytes: int = PROVIDER_RESPONSE_MAX_BYTES,
+) -> None:
+    """Levanta `ProviderUnavailable` si `Content-Length` excede el cap.
+
+    El check es soft (no honora chunked transfer-encoding ni
+    streaming responses sin Content-Length). Esos casos siguen
+    siendo posibles vectores — el caller que lea el body debe
+    truncar con `aiter_bytes` o equivalente si requiere defensa
+    fuerte.
+
+    Args:
+      content_length: el header `Content-Length` del response (str
+        del header dict, int, o None). Si es None o no parseable,
+        no bloquea (caller debe complementar con stream-cap).
+      provider: nombre del provider (p.ej. 'grok'); va al mensaje.
+      path: path del endpoint para diagnóstico.
+      cap_bytes: límite máximo permitido en bytes.
+
+    Raises:
+      ProviderUnavailable: si el header indica un body > cap.
+    """
+    if content_length is None:
+        return
+    try:
+        n = int(content_length)
+    except (TypeError, ValueError):
+        return
+    if n > cap_bytes:
+        raise ProviderUnavailable(
+            f'{provider} {path}: response too large '
+            f'({n} bytes > {cap_bytes} cap, possible attack or buggy provider)',
+        )
+
+
 class PersistentHttpxClient:
     """Wrapper que expone `httpx.AsyncClient` vía protocolo
     async-context-manager **sin cerrarlo al salir**.
@@ -365,8 +412,10 @@ class STTProvider(IAProvider):
 
 __all__ = [
     # Excepciones
+    'PROVIDER_RESPONSE_MAX_BYTES',
     'PersistentHttpxClient',
     'ProviderError',
+    'assert_response_within_size_limit',
     'ProviderTimeoutError',
     'ProviderRateLimited',
     'ProviderContentRejected',

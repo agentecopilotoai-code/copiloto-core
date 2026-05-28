@@ -60,6 +60,7 @@ from app.ai.providers.base import (
     TranscriptResult,
     VideoProvider,
     VideoResult,
+    assert_response_within_size_limit,
 )
 
 logger = logging.getLogger(__name__)
@@ -667,6 +668,11 @@ def _translate_response_status(resp: httpx.Response, path: str) -> None:
     silenciosamente. Compartido entre `_translate_response` (JSON),
     `_post_binary` (bytes) y `_post_multipart`.
     """
+    # SEC-022 (audit#4) — bytes cap defensivo.
+    assert_response_within_size_limit(
+        resp.headers.get('content-length'),
+        provider='grok', path=path,
+    )
     if resp.status_code == 429:
         retry_after_raw = resp.headers.get('retry-after')
         retry_after = _parse_retry_after(retry_after_raw)

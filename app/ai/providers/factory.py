@@ -42,6 +42,7 @@ from app.ai.providers.ollama import OllamaProvider
 from app.ai.providers.openai import OpenAIProvider
 from app.ai.registry import ResolvedProvider
 from app.services.secret_resolver import resolve_secret_ref
+from app.services.url_safety import UrlSafetyError, check_provider_url
 
 # Providers de cloud que requieren API key (lectura desde secret_ref).
 _CLOUD_PROVIDERS: frozenset[str] = frozenset({'grok', 'openai', 'anthropic', 'elevenlabs'})
@@ -63,6 +64,38 @@ def _params_get(params: Any, key: str, default: Any = None) -> Any:
     if isinstance(params, dict):
         return params.get(key, default)
     return default
+
+
+def _safe_base_url(params: Any, provider: str) -> str | None:
+    """SEC-023 (audit#4) — replica el guard SSRF al instanciar el adapter.
+
+    El write-path (admin_routes._reject_unsafe_provider_url) lo valida
+    al PATCH; este es defense-in-depth para casos donde la DB se
+    pre-pobló sin validación o se corrompió. Si la URL es unsafe
+    para el `provider` (e.g. private-IP para `grok` cloud) levantamos
+    `ProviderUnavailable` que el dispatcher trata como retryable —
+    abrirá el breaker y caerá al fallback.
+
+    Args:
+      params: `ResolvedProvider.params` dict (puede ser None/non-dict).
+      provider: nombre canónico del provider — decide cloud vs local.
+
+    Returns:
+      La base_url si es safe; ``None`` si no había configurada.
+
+    Raises:
+      ProviderUnavailable: si la URL existe pero es unsafe.
+    """
+    base_url = _params_get(params, 'base_url')
+    if not base_url:
+        return None
+    try:
+        check_provider_url(base_url, provider=provider, field='params.base_url')
+    except UrlSafetyError as exc:
+        raise ProviderUnavailable(
+            f'{provider}: refused unsafe base_url — {exc}',
+        ) from exc
+    return base_url
 
 
 def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
@@ -97,7 +130,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'grok':
         kwargs: dict[str, Any] = {'api_key': _require_api_key(resolved)}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
@@ -112,7 +145,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'openai':
         kwargs = {'api_key': _require_api_key(resolved)}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
@@ -125,7 +158,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'anthropic':
         kwargs = {'api_key': _require_api_key(resolved)}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
@@ -135,7 +168,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'elevenlabs':
         kwargs = {'api_key': _require_api_key(resolved)}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
@@ -145,7 +178,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'ollama':
         kwargs = {}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
@@ -155,7 +188,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'local_sdxl':
         kwargs = {}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
@@ -165,7 +198,7 @@ def make_adapter_for_provider(resolved: ResolvedProvider) -> IAProvider:
 
     if name == 'local_whisper':
         kwargs = {}
-        if (base_url := _params_get(params, 'base_url')):
+        if (base_url := _safe_base_url(params, name)):
             kwargs['base_url'] = base_url
         if (timeout := _params_get(params, 'timeout')):
             kwargs['timeout'] = float(timeout)
