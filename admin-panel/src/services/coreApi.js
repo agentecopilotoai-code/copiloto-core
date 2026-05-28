@@ -225,6 +225,31 @@ export function testAIProvider(session, modality, body) {
   });
 }
 
+// Email providers (v2.0.0 — multi-provider con fallback chain).
+export function listEmailProviders(session) {
+  return request('/platform/email-providers', { session });
+}
+export function createEmailProvider(session, payload) {
+  return request('/platform/email-providers', {
+    method: 'POST', session, body: payload,
+  });
+}
+export function patchEmailProvider(session, providerId, payload) {
+  return request(`/platform/email-providers/${providerId}`, {
+    method: 'PATCH', session, body: payload,
+  });
+}
+export function deleteEmailProvider(session, providerId) {
+  return request(`/platform/email-providers/${providerId}`, {
+    method: 'DELETE', session,
+  });
+}
+export function testEmailProvider(session, providerId, payload) {
+  return request(`/platform/email-providers/${providerId}/test`, {
+    method: 'POST', session, body: payload,
+  });
+}
+
 // Tenant modules (activación opt-in por tenant).
 export function listTenantModules(session, { module, enabled, tenantSearch } = {}) {
   const params = new URLSearchParams();

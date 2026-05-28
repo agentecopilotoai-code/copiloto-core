@@ -255,15 +255,14 @@ SERVICE_TOKEN=CHANGE_ME
 #   2. Skip explícito SOLO en dev local descomentando esta línea:
 # MFA_ENFORCEMENT_ENABLED=false
 
-# ─── Resend (emails transaccionales: invitations, password reset) ─────
-# Sin esto, el core usa NoopProvider — emails NO se envían, solo se
-# loguean (warning visible). Para enviarlos de verdad:
-#   1. Cuenta gratis en https://resend.com (3000 emails/mes free).
-#   2. Crear API key (https://resend.com/api-keys) — empieza con re_...
-#   3. Verificar dominio sender (https://resend.com/domains) o usar
-#      'onboarding@resend.dev' para tests.
-#   4. Descomentar y rellenar:
-# RESEND_API_KEY=re_xxxxxxxxxxxxx
+# ─── Email (multi-provider, v2.0.0) ───────────────────────────────────
+# v2.0.0 (BREAKING): RESEND_API_KEY ya no se lee. Los providers viven en
+# `app.email_providers` (DB) y se configuran desde la admin SPA en
+# `/admin/platform/email-providers`. El operador agrega Resend, SendGrid,
+# Mailgun o SMTP con prioridades; el dispatcher hace fallback chain.
+# Ver `docs/EMAIL.md` para la guía paso-a-paso.
+#
+# Lo único que sobrevive en el env es el sender global de fallback:
 # EMAIL_FROM_ADDRESS=invites@tu-dominio.com
 # EMAIL_FROM_NAME={project_name}
 

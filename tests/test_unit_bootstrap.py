@@ -92,23 +92,26 @@ def test_apply_platform_schema_fresh_db_applies_both_files():
 
 def test_apply_platform_schema_idempotent_second_run():
     conn = FakeConn(platform_table_exists=True)
-    conn.applied_versions = {'10-core', '20-seed'}
+    # v2.0.0: el tuple incluye `30-email-providers.sql` además de los 2 viejos.
+    conn.applied_versions = {'10-core', '20-seed', '30-email-providers'}
     applied = _run(apply_platform_schema(conn))
     assert applied == []
 
 
 def test_apply_platform_schema_partial_apply_continues():
-    """Si solo 10-core está aplicado, debe aplicar solo 20-seed."""
+    """Si solo 10-core está aplicado, debe aplicar el resto."""
     conn = FakeConn(platform_table_exists=True)
     conn.applied_versions = {'10-core'}
     applied = _run(apply_platform_schema(conn))
-    assert applied == ['20-seed.sql']
+    # v2.0.0: incluye también `30-email-providers.sql`.
+    assert applied == ['20-seed.sql', '30-email-providers.sql']
 
 
 def test_apply_platform_schema_no_seed():
     conn = FakeConn(platform_table_exists=False)
     applied = _run(apply_platform_schema(conn, seed=False))
-    assert applied == ['10-core.sql']
+    # v2.0.0: `30-email-providers.sql` no es seed, sí se aplica.
+    assert applied == ['10-core.sql', '30-email-providers.sql']
     assert '20-seed' not in conn.applied_versions
 
 

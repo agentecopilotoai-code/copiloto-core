@@ -110,6 +110,8 @@ from copiloto_core.api.v1.handlers import platform_roles_handlers as _platform_r
 from copiloto_core.api.v1.handlers import invitation_handlers as _invitation_handlers  # noqa: F401, E402
 # Endpoints platform admin adicionales (AI providers + tenant_modules CRUD).
 from copiloto_core.platform_admin import admin_routes as _platform_admin_routes  # noqa: F401, E402
+# v2.0.0 — Email providers CRUD (mismo router platform_admin gated por MFA).
+from copiloto_core.platform_admin import email_provider_routes as _email_provider_routes  # noqa: F401, E402
 
 # ─── Composición final ─────────────────────────────────────────────────────
 

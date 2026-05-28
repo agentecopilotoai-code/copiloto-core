@@ -205,7 +205,10 @@ son **HTML+CSS+JS vanilla** sin framework. Editalos directo:
 - **Paths bajo `/admin/api/*`**: son del BFF interno del core para
   el admin panel. No los pises desde tu app.
 - **Paths bajo `/v1/platform/*`**: endpoints platform-owner-only.
-  Solo el equipo del core los modifica.
+  Solo el equipo del core los modifica. v2.0.0 agrega
+  `/v1/platform/email-providers/*` (CRUD + smoke test) para el
+  subsistema multi-provider de email — ver
+  [`docs/EMAIL.md`](EMAIL.md).
 - **`/v1/branding`, `/v1/me`, `/v1/tenants/*`**: API contractual del
   core, parte del semver public surface.
 - **`/admin/login`, `/admin/callback`, `/admin/logout`**: el flow

@@ -232,6 +232,8 @@ function iconForSection(section) {
       return svgKey();
     case 'Proveedores IA':
       return svgSparkles();
+    case 'Proveedores de email':
+      return svgEnvelope();
     case 'Configuración':
       return svgCog();
     default:
@@ -255,6 +257,15 @@ function svgSparkles() {
     <svg {...SVG_PROPS} data-icon="sparkles">
       <path d="M12 3v4M12 17v4M5 12H3M21 12h-2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4" />
       <circle cx="12" cy="12" r="3" />
+    </svg>
+  );
+}
+
+function svgEnvelope() {
+  return (
+    <svg {...SVG_PROPS} data-icon="envelope">
+      <rect x="3" y="5" width="18" height="14" rx="2" />
+      <path d="m3 7 9 6 9-6" />
     </svg>
   );
 }

@@ -57,6 +57,11 @@ const AIProvidersContainer = lazyNamed(
   () => import('../features/platform/ai-providers/AIProvidersContainer.jsx'),
   'AIProvidersContainer',
 );
+// v2.0.0 — Email providers (multi-provider con fallback chain).
+const EmailProvidersContainer = lazyNamed(
+  () => import('../features/platform/email-providers/EmailProvidersContainer.jsx'),
+  'EmailProvidersContainer',
+);
 
 // ─── Tenant transversales — lazy ────────────────────────────────────────────
 const TeamModule = lazyNamed(() => import('../features/owner-admin/team/index.js'), 'TeamModule');
@@ -84,6 +89,12 @@ export const MODULE_REGISTRY = Object.freeze({
   // Alimenta cualquier módulo de producto que requiera IA.
   'platform-ai-providers': {
     Component: AIProvidersContainer,
+    capability: 'platform.ai_providers.configure',
+    mode: 'RW',
+  },
+  // v2.0.0 — Email providers (multi-provider, fallback chain).
+  'platform-email-providers': {
+    Component: EmailProvidersContainer,
     capability: 'platform.ai_providers.configure',
     mode: 'RW',
   },

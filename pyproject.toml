@@ -1,6 +1,6 @@
 [project]
 name = "copiloto-core"
-version = "1.6.4"
+version = "2.0.0"
 description = "Sistema operativo multi-tenant para construir SaaS verticales sobre una base común de auth, RBAC, IA dispatch, billing, observabilidad y operaciones."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -43,6 +43,16 @@ dependencies = [
   # InMemorySessionStore sigue siendo el default cuando REDIS_URL no
   # está configurado, así que tests/single-process no requieren broker.
   "redis==5.2.1",
+  # v2.0.0 — multi-provider email subsystem (`copiloto_core.email`).
+  # Cada adapter es lazy-import dentro de la factory, pero las deps
+  # quedan en runtime para que el operador pueda activar cualquier
+  # provider desde la UI sin reinstalar.
+  #   - aiosmtplib: usado por `copiloto_core.email.providers.smtp`.
+  #   - sendgrid: SDK oficial — el adapter del core usa httpx directo
+  #     (consistencia con resend/mailgun), pero el SDK se distribuye
+  #     para devs que prefieran usarlo en sus módulos.
+  "aiosmtplib==3.0.2",
+  "sendgrid==6.11.0",
 ]
 
 [project.optional-dependencies]
