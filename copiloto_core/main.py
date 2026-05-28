@@ -85,6 +85,33 @@ _SECURITY_HEADERS = {
     ),
 }
 
+# v1.5.2: paths donde Swagger UI / ReDoc cargan assets desde
+# cdn.jsdelivr.net y bootstrapean con un inline script — incompatible
+# con el CSP estricto del core. Para estos paths específicos relajamos
+# CSP permitiendo jsdelivr + inline scripts.
+#
+# Trade-off de seguridad: estos endpoints son herramientas dev/admin que
+# leakean la API surface al atacante (los argumentos contra exponer /docs
+# en prod existen independiente de CSP). Para prod-hardening, deshabilitá
+# /docs y /redoc con FastAPI(docs_url=None, redoc_url=None).
+_DOCS_PATHS = (
+    '/docs',
+    '/redoc',
+    '/openapi.json',
+    '/docs/oauth2-redirect',
+)
+
+_DOCS_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "img-src 'self' data: blob: https:; "
+    "font-src 'self' data: https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'; "
+    "base-uri 'self'; "
+)
+
 
 async def _security_headers_middleware(request: Request, call_next):
     """Adjunta security headers a CADA response.
@@ -104,8 +131,14 @@ async def _security_headers_middleware(request: Request, call_next):
       handler — `setdefault` respeta lo que ya pusieron.
     """
     response = await call_next(request)
+    # v1.5.2: si el path es FastAPI's auto-docs (/docs, /redoc, etc.),
+    # usar CSP relajado que permite cdn.jsdelivr.net. Sino el strict del core.
+    is_docs = request.url.path in _DOCS_PATHS
     for header, value in _SECURITY_HEADERS.items():
-        response.headers.setdefault(header, value)
+        if is_docs and header == 'Content-Security-Policy':
+            response.headers.setdefault(header, _DOCS_CSP)
+        else:
+            response.headers.setdefault(header, value)
     # PERF-024 — default no-store. Endpoints estáticos (admin SPA,
     # /openapi.json, etc.) pueden sobreescribir poniendo su propio
     # Cache-Control en la response antes del return.
