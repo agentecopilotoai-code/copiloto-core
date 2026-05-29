@@ -39,7 +39,8 @@ Uso típico:
   # Crear nuevo SaaS con kit de producción (v2.1.0+):
   python -m copiloto_core new-project mi-saas --with-infra --prod-ready
   # Genera además: Dockerfile + docker-compose.prod.yml + gunicorn_conf.py
-  # + nginx.conf.example + scripts/backup.sh + .github/workflows/deploy.yml
+  # + nginx.conf.example + scripts/prod-up.sh (v2.1.1+) + scripts/backup.sh
+  # + .github/workflows/deploy.yml + .env.prod.example + .dockerignore
   # Ver docs/DEPLOYMENT.md del core para el flow completo de deploy.
 
   # Step del deploy en producción:
@@ -207,8 +208,8 @@ def _cmd_new_project(args: argparse.Namespace) -> int:
         print('  infra dev: docker-compose.yml + scripts/dev-up.sh')
     if result.prod_ready:
         print('  prod kit: Dockerfile + docker-compose.prod.yml + gunicorn_conf.py')
-        print('            nginx.conf.example + scripts/backup.sh + .env.prod.example')
-        print('            .github/workflows/deploy.yml')
+        print('            nginx.conf.example + scripts/prod-up.sh + scripts/backup.sh')
+        print('            .env.prod.example + .github/workflows/deploy.yml')
     print(f'  archivos: {len(result.files_written)}')
     print('')
     print('Próximos pasos:')

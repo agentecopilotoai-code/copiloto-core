@@ -609,7 +609,8 @@ def test_cli_new_project_with_infra_flag(tmp_path: Path, capsys) -> None:
 
 
 def test_prod_ready_includes_all_deployment_artifacts(tmp_path: Path) -> None:
-    """`--prod-ready` agrega 8 archivos para deploy a producción.
+    """`--prod-ready` agrega 9 archivos para deploy a producción
+    (v2.1.1+ — sumó scripts/prod-up.sh espejo de dev-up.sh).
     Test único que valida la presencia de todos juntos — los tests
     siguientes verifican el contenido específico de cada uno."""
     result = generate_project(
@@ -624,6 +625,7 @@ def test_prod_ready_includes_all_deployment_artifacts(tmp_path: Path) -> None:
         'docker-compose.prod.yml',
         'gunicorn_conf.py',
         'nginx.conf.example',
+        'scripts/prod-up.sh',
         'scripts/backup.sh',
         '.github/workflows/deploy.yml',
         '.env.prod.example',
@@ -765,6 +767,63 @@ def test_nginx_conf_has_tls_security_headers_and_metrics_deny(
     # Forwarded headers al upstream (gunicorn las consume)
     assert 'X-Forwarded-For' in nginx
     assert 'X-Forwarded-Proto' in nginx
+
+
+def test_prod_up_script_is_executable_and_idempotent(tmp_path: Path) -> None:
+    """v2.1.1 — espejo de dev-up.sh para el flow VPS+Compose.
+    Debe ser ejecutable + tener los pasos canónicos en orden +
+    fail-fast si falta .env.prod + health-check post-deploy contra
+    /v1/readyz (no /v1/livez — readyz toca DB+Redis, livez solo proceso)."""
+    result = generate_project(
+        project_name='mi-saas',
+        target_dir=tmp_path / 'p',
+        prod_ready=True,
+        module_name='alertas',
+    )
+    script = result.target_dir / 'scripts' / 'prod-up.sh'
+    mode = script.stat().st_mode & 0o777
+    assert mode & 0o100, f'prod-up.sh debería ser ejecutable, mode={oct(mode)}'
+
+    src = script.read_text()
+    # Fail-fast si falta .env.prod (los CHANGE_ME del template no sirven)
+    assert 'FALTA .env.prod' in src
+    # Compose con env-file explícito (no usa el .env de dev)
+    assert '--env-file .env.prod' in src
+    assert 'docker-compose.prod.yml' in src
+    # Build + bootstrap + migrate + up — el orden importa (bootstrap antes
+    # de migrate sino las migrations fallan por schema faltante)
+    pos_build = src.index('build app')
+    pos_bootstrap = src.index('bootstrap')
+    pos_migrate = src.index('migrate --module=alertas')
+    pos_up_app = src.index('up -d app')
+    assert pos_build < pos_bootstrap < pos_migrate < pos_up_app, (
+        'orden roto: debe ser build → bootstrap → migrate → up app'
+    )
+    # Health check post-deploy contra readyz (toca DB+Redis), NO livez
+    assert '/v1/readyz' in src
+    # set -euo pipefail — un solo fallo aborta todo el deploy
+    assert 'set -euo pipefail' in src
+
+
+def test_prod_up_script_no_shell_substitution_bugs(tmp_path: Path) -> None:
+    """v2.1.1 — guardarail: el template usa Python str.format() así que
+    cualquier `app` literal mezclado con backticks haría command
+    substitution en bash. Validamos que NO hay backticks que disparen
+    ejecución no intencional dentro de strings double-quoted."""
+    result = generate_project(
+        project_name='mi-saas', target_dir=tmp_path / 'p', prod_ready=True,
+    )
+    src = (result.target_dir / 'scripts' / 'prod-up.sh').read_text()
+    # backticks DENTRO de "..." son command substitution. Permitir
+    # solo si están dentro de comentarios (# `cmd`) — los echo no.
+    for line in src.splitlines():
+        stripped = line.lstrip()
+        if stripped.startswith('#'):
+            continue   # comentarios pueden tener backticks
+        if 'echo "' in line and '`' in line:
+            raise AssertionError(
+                f'backtick en echo "..." haría command substitution: {line!r}',
+            )
 
 
 def test_backup_script_is_executable_and_uses_pg_dump_custom_format(
