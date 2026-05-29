@@ -1417,6 +1417,95 @@ server {{
 '''
 
 
+_PROD_UP_SH = '''\
+#!/usr/bin/env bash
+# scripts/prod-up.sh — deploy + update idempotente del stack prod.
+#
+# Espejado del flow de `dev-up.sh` pero contra `docker-compose.prod.yml`.
+# Pensado para correr DENTRO del VPS (o un runner CI con SSH al VPS) —
+# NO en tu máquina local de desarrollo.
+#
+# Asume:
+#   - Estás en el directorio raíz del proyecto en el VPS.
+#   - `.env.prod` existe con secrets reales (no los CHANGE_ME del template).
+#   - Docker Compose v2 está instalado y el usuario está en el grupo `docker`.
+#
+# Hace, en orden:
+#   1. Build de la imagen `app` (rebuild si cambió el código).
+#   2. Levanta postgres/redis/minio + espera healthy.
+#   3. Bootstrap idempotente del schema platform (`app.*`).
+#   4. Migrate de las migrations del módulo.
+#   5. Up del service `app` (recreate si la imagen cambió).
+#   6. Health check contra `/v1/readyz` con timeout 60s.
+#
+# Idempotente: re-correrlo después de cambios solo rebuilda + redeploya
+# sin tocar volúmenes ni perder data.
+#
+# Para rollback manual a la imagen anterior:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod \\
+#     up -d --no-deps --force-recreate app
+# (usando el tag de la imagen previa que tengas en local registry).
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+if [ ! -f .env.prod ]; then
+  echo "FALTA .env.prod — copialo de .env.prod.example y completá secrets:" >&2
+  echo "    cp .env.prod.example .env.prod" >&2
+  echo "    python -m copiloto_core generate-secrets --target=.env.prod" >&2
+  exit 1
+fi
+
+COMPOSE="docker compose -f docker-compose.prod.yml --env-file .env.prod"
+
+echo "→ Build de la imagen app…"
+$COMPOSE build app
+
+echo "→ Levantando infra (postgres, redis, minio) + esperando healthy…"
+$COMPOSE up -d postgres redis minio
+for i in {{1..60}}; do
+  if $COMPOSE exec -T postgres pg_isready -U postgres > /dev/null 2>&1; then
+    echo "  ✓ postgres listo"
+    break
+  fi
+  sleep 1
+done
+
+echo "→ Bootstrap platform schema (idempotente — no-op si ya está aplicado)…"
+$COMPOSE run --rm app python -m copiloto_core bootstrap --create-app-user --no-seed
+
+echo "→ Aplicando migrations del módulo {module_package}…"
+$COMPOSE run --rm app python -m copiloto_core migrate --module={module_package}
+
+echo "→ Levantando app (recreate si la imagen cambió)…"
+$COMPOSE up -d app
+
+echo "→ Esperando /v1/readyz responda 200 (timeout 60s)…"
+for i in {{1..30}}; do
+  if curl -fsS http://127.0.0.1:8000/v1/readyz > /dev/null 2>&1; then
+    echo ""
+    echo "✓ deploy OK"
+    echo "  /v1/readyz: $(curl -s http://127.0.0.1:8000/v1/readyz)"
+    echo ""
+    echo "  Si nginx ya está delante, validá HTTPS:"
+    echo "    curl https://tudominio.com/v1/livez"
+    exit 0
+  fi
+  sleep 2
+done
+
+echo "" >&2
+echo "✗ /v1/readyz nunca respondió 200 en 60s." >&2
+echo "  Logs del container app:" >&2
+$COMPOSE logs --tail=50 app >&2
+echo "" >&2
+echo "  Rollback manual:" >&2
+echo "    $COMPOSE down app  # detiene la nueva versión" >&2
+echo "    # restorá la imagen previa via tag o re-deployá desde un commit anterior" >&2
+exit 1
+'''
+
+
 _BACKUP_SH = '''\
 #!/usr/bin/env bash
 # scripts/backup.sh — backup de la DB de {project_name}.
@@ -1694,6 +1783,9 @@ def _render_files(
         files['docker-compose.prod.yml'] = _DOCKER_COMPOSE_PROD.format(**ctx)
         files['gunicorn_conf.py'] = _GUNICORN_CONF.format(**ctx)
         files['nginx.conf.example'] = _NGINX_CONF_EXAMPLE.format(**ctx)
+        # v2.1.1: espejo de dev-up.sh para el flow VPS+Compose.
+        # Idempotente — re-correr solo rebuilda + redeploya.
+        files['scripts/prod-up.sh'] = _PROD_UP_SH.format(**ctx)
         files['scripts/backup.sh'] = _BACKUP_SH.format(**ctx)
         files['.github/workflows/deploy.yml'] = _GITHUB_ACTIONS_DEPLOY.format(**ctx)
         files['.env.prod.example'] = _ENV_PROD_EXAMPLE.format(**ctx)
